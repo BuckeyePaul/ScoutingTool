@@ -1,172 +1,416 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NFL Draft Scout Randomizer</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFL Draft Scout Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@400;500;600;700&family=Rajdhani:wght@400;500;600;700&family=Roboto+Slab:wght@400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div class="container">
-    <!-- Header -->
-    <header class="header">
-      <h1>🏈 NFL Draft Scout Randomizer</h1>
-      <div class="stats-bar">
-        <div class="stat-item">
-          <span class="stat-label">Total Players:</span>
-          <span id="total-players" class="stat-value">0</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Scouted:</span>
-          <span id="scouted-players" class="stat-value">0</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Remaining:</span>
-          <span id="remaining-players" class="stat-value">0</span>
-        </div>
-      </div>
-    </header>
-
-    <!-- Filters Section -->
-    <div class="filters-section">
-      <div class="filter-group">
-        <label>Position Filter:</label>
-        <div id="position-filters" class="position-filters">
-          <!-- Populated dynamically -->
-        </div>
-      </div>
-     
-      <div class="filter-group">
-        <label>Ranking Filter:</label>
-        <div class="ranking-filters">
-          <button class="rank-btn active" data-rank="all">All Players</button>
-          <button class="rank-btn" data-rank="50">Top 50</button>
-          <button class="rank-btn" data-rank="100">Top 100</button>
-          <button class="rank-btn" data-rank="200">Top 200</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Randomizer Section -->
-    <div class="randomizer-section">
-      <button id="randomize-btn" class="randomize-button">
-        <span class="btn-text">Scout Random Player</span>
-      </button>
-     
-      <!-- CS:GO Style Case Opening Animation -->
-      <div id="case-animation" class="case-animation hidden">
-        <div class="case-container">
-          <div class="selector-line"></div>
-          <div id="items-strip" class="items-strip">
-            <!-- Schools will be populated here -->
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Player Details Section -->
-    <div id="player-details" class="player-details hidden">
-      <div class="player-header">
-        <div class="player-main-info">
-          <h2 id="player-name"></h2>
-          <div class="player-meta">
-            <span id="player-position" class="badge position-badge"></span>
-            <span id="player-school" class="badge school-badge"></span>
-            <span id="player-jersey" class="badge jersey-badge" style="display: none;"></span>
-            <span id="player-rank" class="badge rank-badge clickable-badge" title="Click to toggle visibility">
-              <span class="hidden-text">Overall Rank: </span>
-              <span class="rank-value">???</span>
-            </span>
-            <span id="player-pos-rank" class="badge pos-rank-badge clickable-badge" title="Click to toggle visibility" style="display: none;">
-              <span class="hidden-text">Pos Rank: </span>
-              <span class="pos-rank-value">???</span>
-            </span>
-          </div>
-        </div>
-        <div class="player-actions">
-          <button id="mark-scouted-btn" class="action-btn scout-btn">
-            <span>✓</span> Mark as Scouted
-          </button>
-        </div>
-      </div>
-
-      <div class="player-body">
-        <div class="player-stats-section">
-          <h3>Physical Measurements</h3>
-          <div class="measurements">
-            <div class="measurement-item">
-              <span class="measurement-label">Height:</span>
-              <span id="player-height" class="measurement-value"></span>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🏈 NFL Draft Scout Assistant</h1>
+            <div class="stats-bar">
+                <div class="stat-item">
+                    <span class="stat-label">Total Players:</span>
+                    <span id="total-players" class="stat-value">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Scouted:</span>
+                    <span id="scouted-players" class="stat-value">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Remaining:</span>
+                    <span id="remaining-players" class="stat-value">0</span>
+                </div>
             </div>
-            <div class="measurement-item">
-              <span class="measurement-label">Weight:</span>
-              <span id="player-weight" class="measurement-value"></span>
+        </header>
+
+        <div class="tabs-nav">
+            <button class="tab-btn active" data-tab="search-tab">Player Search</button>
+            <button class="tab-btn" data-tab="randomizer-tab">Randomizer</button>
+            <button class="tab-btn" data-tab="bigboard-tab">Big Board</button>
+            <button class="tab-btn" data-tab="settings-tab">Settings</button>
+        </div>
+
+        <div id="randomizer-tab" class="tab-panel hidden">
+            <!-- Filters Section -->
+            <div class="filters-section">
+                <div class="filter-group">
+                    <label>Position Filter:</label>
+                    <div id="position-filters" class="position-filters">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+
+                <div class="filter-group">
+                    <label>Ranking Filter:</label>
+                    <div class="ranking-filters">
+                        <button class="rank-btn active" data-rank="all">All Players</button>
+                        <button class="rank-btn" data-rank="50">Top 50</button>
+                        <button class="rank-btn" data-rank="100">Top 100</button>
+                        <button class="rank-btn" data-rank="200">Top 200</button>
+                    </div>
+                </div>
             </div>
-          </div>
 
-          <h3>Statistics</h3>
-          <div id="player-stats" class="stats-grid">
-            <!-- Stats populated dynamically -->
-          </div>
+            <!-- Randomizer Section -->
+            <div class="randomizer-section">
+                <button id="randomize-btn" class="randomize-button">
+                    <span class="btn-text">Scout Random Player</span>
+                </button>
 
-          <h3>External Resources</h3>
-          <div class="external-links">
-            <a id="sports-ref-link" href="#" target="_blank" class="external-link">
-              📊 Sports Reference
-            </a>
-            <a id="espn-link" href="#" target="_blank" class="external-link">
-              🏈 ESPN
-            </a>
-            <a id="tankathon-link" href="#" target="_blank" class="external-link">
-              📈 Tankathon Profile
-            </a>
-          </div>
+                <!-- CS:GO Style Case Opening Animation -->
+                <div id="case-animation" class="case-animation hidden">
+                    <div class="case-container">
+                        <div class="selector-line"></div>
+                        <div id="items-strip" class="items-strip">
+                            <!-- Schools will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
-        <div class="player-notes-section">
-          <h3>Scouting Notes</h3>
-          <textarea id="notes-input" placeholder="Add your scouting notes here..." rows="6"></textarea>
-          <button id="save-notes-btn" class="save-btn">Save Notes</button>
+        <div id="search-tab" class="tab-panel active">
+            <div class="filters-section">
+                <div class="filter-group">
+                    <label for="search-input">Search by Player Name:</label>
+                    <input id="search-input" class="search-input" type="text" placeholder="e.g. Travis Hunter">
+                </div>
 
-          <h3>Overall Grade</h3>
-          <div class="grade-selector">
-            <select id="grade-dropdown" class="grade-dropdown">
-              <option value="">Select Draft Grade...</option>
-              <option value="Early-Round 1">Early-Round 1</option>
-              <option value="Mid-Round 1">Mid-Round 1</option>
-              <option value="Late-Round 1">Late-Round 1</option>
-              <option value="Early-Round 2">Early-Round 2</option>
-              <option value="Mid-Round 2">Mid-Round 2</option>
-              <option value="Late-Round 2">Late-Round 2</option>
-              <option value="Early-Round 3">Early-Round 3</option>
-              <option value="Mid-Round 3">Mid-Round 3</option>
-              <option value="Late-Round 3">Late-Round 3</option>
-              <option value="Early-Round 4">Early-Round 4</option>
-              <option value="Mid-Round 4">Mid-Round 4</option>
-              <option value="Late-Round 4">Late-Round 4</option>
-              <option value="Early-Round 5">Early-Round 5</option>
-              <option value="Mid-Round 5">Mid-Round 5</option>
-              <option value="Late-Round 5">Late-Round 5</option>
-              <option value="Early-Round 6">Early-Round 6</option>
-              <option value="Mid-Round 6">Mid-Round 6</option>
-              <option value="Late-Round 6">Late-Round 6</option>
-              <option value="Early-Round 7">Early-Round 7</option>
-              <option value="Mid-Round 7">Mid-Round 7</option>
-              <option value="Late-Round 7">Late-Round 7</option>
-              <option value="UDFA">UDFA (Undrafted Free Agent)</option>
-            </select>
-          </div>
-          <div id="current-grade" class="current-grade">
-            Current Grade: <span id="grade-display">Not Graded</span>
-          </div>
+                <div class="filter-group">
+                    <label for="school-search-input">School:</label>
+                    <input id="school-search-input" class="search-input" type="text" list="schools-list" placeholder="Select or type a school">
+                    <datalist id="schools-list"></datalist>
+                </div>
+
+                <div class="filter-group">
+                    <label>Position Filter:</label>
+                    <div id="search-position-filters" class="position-filters">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+
+                <div class="filter-group search-actions">
+                    <label class="include-scouted-toggle">
+                        <input id="search-include-scouted" type="checkbox" checked>
+                        Include scouted players
+                    </label>
+                    <button id="search-btn" class="randomize-button search-button">Search Players</button>
+                </div>
+            </div>
+
+            <div class="search-results-section">
+                <h3>Search Results</h3>
+                <div id="search-results" class="search-results"></div>
+            </div>
         </div>
-      </div>
+
+        <div id="bigboard-tab" class="tab-panel hidden">
+            <div class="filters-section">
+                <div class="filter-group bigboard-type-group">
+                    <label>Board Type:</label>
+                    <div class="ranking-filters">
+                        <button id="overall-board-btn" class="board-type-btn active" data-type="overall">Overall Big Board</button>
+                        <button id="position-board-btn" class="board-type-btn" data-type="position">Positional Big Board</button>
+                    </div>
+                </div>
+
+                <div id="position-board-selector" class="filter-group hidden">
+                    <label for="bigboard-position-select">Position Board:</label>
+                    <select id="bigboard-position-select" class="grade-dropdown"></select>
+                </div>
+            </div>
+
+            <div class="bigboard-layout">
+                <div class="search-results-section">
+                    <h3>Add Players From Database</h3>
+                    <input id="bigboard-player-search" class="search-input" type="text" placeholder="Search players by name...">
+                    <div id="bigboard-player-results" class="search-results bigboard-player-results"></div>
+                </div>
+
+                <div class="search-results-section">
+                    <div class="bigboard-header-row">
+                        <h3 id="bigboard-title">Overall Big Board</h3>
+                        <button id="bigboard-autosort-btn" class="mini-btn">Auto-sort by Grade</button>
+                    </div>
+                    <div id="bigboard-list" class="bigboard-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="settings-tab" class="tab-panel hidden">
+            <div class="filters-section">
+                <h3 class="settings-heading">App Preferences</h3>
+                <div class="settings-form-grid">
+                    <div class="filter-group">
+                        <label for="theme-select">Scheme</label>
+                        <select id="theme-select" class="grade-dropdown">
+                            <option value="default">Default</option>
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                            <option value="nfl-team">NFL Team Colors</option>
+                        </select>
+                    </div>
+                    <div id="theme-team-group" class="filter-group hidden">
+                        <label for="theme-team-select">Team City</label>
+                        <select id="theme-team-select" class="grade-dropdown">
+                            <option value="Arizona">Arizona</option>
+                            <option value="Atlanta">Atlanta</option>
+                            <option value="Baltimore">Baltimore</option>
+                            <option value="Buffalo">Buffalo</option>
+                            <option value="Carolina">Carolina</option>
+                            <option value="Chicago">Chicago</option>
+                            <option value="Cincinnati">Cincinnati</option>
+                            <option value="Cleveland">Cleveland</option>
+                            <option value="Dallas">Dallas</option>
+                            <option value="Denver">Denver</option>
+                            <option value="Detroit">Detroit</option>
+                            <option value="Green Bay">Green Bay</option>
+                            <option value="Houston">Houston</option>
+                            <option value="Indianapolis">Indianapolis</option>
+                            <option value="Jacksonville">Jacksonville</option>
+                            <option value="Kansas City">Kansas City</option>
+                            <option value="Las Vegas">Las Vegas</option>
+                            <option value="Los Angeles AFC">Los Angeles AFC</option>
+                            <option value="Los Angeles NFC">Los Angeles NFC</option>
+                            <option value="Miami">Miami</option>
+                            <option value="Minnesota">Minnesota</option>
+                            <option value="New England">New England</option>
+                            <option value="New Orleans">New Orleans</option>
+                            <option value="New York AFC">New York AFC</option>
+                            <option value="New York NFC">New York NFC</option>
+                            <option value="Philadelphia">Philadelphia</option>
+                            <option value="Pittsburgh">Pittsburgh</option>
+                            <option value="San Francisco">San Francisco</option>
+                            <option value="Seattle">Seattle</option>
+                            <option value="Tampa Bay">Tampa Bay</option>
+                            <option value="Tennessee">Tennessee</option>
+                            <option value="Washington">Washington</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="font-select">Text Font</label>
+                        <select id="font-select" class="grade-dropdown">
+                            <option value="rajdhani">Rajdhani</option>
+                            <option value="inter">Inter</option>
+                            <option value="oswald">Oswald</option>
+                            <option value="roboto-slab">Roboto Slab</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="include-scouted-toggle">
+                            <input id="show-ranks-checkbox" type="checkbox" checked>
+                            Show overall rank in Search and Big Board cards
+                        </label>
+                    </div>
+                </div>
+
+                <button id="reset-preferences-btn" class="mini-btn">Reset Preferences</button>
+
+                <div class="settings-tool-actions">
+                    <button id="refresh-logos-btn" class="mini-btn">Refresh Downloaded Logos</button>
+                    <button id="update-rankings-btn" class="mini-btn">Update Rankings from Tankathon</button>
+                </div>
+                <p id="settings-tools-message" class="search-empty hidden"></p>
+
+                <div class="filter-group">
+                    <label>Grading Systems (select up to 2)</label>
+                    <div class="grade-system-options">
+                        <label class="include-scouted-toggle">
+                            <input type="checkbox" class="grading-system-checkbox" value="round" checked>
+                            Round Grade (Early-Round 1 to UDFA)
+                        </label>
+                        <label class="include-scouted-toggle">
+                            <input type="checkbox" class="grading-system-checkbox" value="poker">
+                            Poker Chip (Purple, Black, Blue, Green, Red, White)
+                        </label>
+                        <label class="include-scouted-toggle">
+                            <input type="checkbox" class="grading-system-checkbox" value="numerical">
+                            Numerical Grade (100-0)
+                        </label>
+                        <label class="include-scouted-toggle">
+                            <input type="checkbox" class="grading-system-checkbox" value="alphabet">
+                            Alphabet Grade (A+-F-)
+                        </label>
+                    </div>
+                    <p id="grading-systems-message" class="search-empty hidden"></p>
+                </div>
+
+                <button id="toggle-add-player-btn" class="mini-btn">Add Player to Database</button>
+
+                <div id="add-player-panel" class="hidden">
+                    <h3 class="settings-heading">Add Player to Database</h3>
+                    <div class="settings-form-grid">
+                    <div class="filter-group">
+                        <label for="settings-name">Player Name *</label>
+                        <input id="settings-name" class="search-input" type="text" placeholder="Player name">
+                    </div>
+                    <div class="filter-group">
+                        <label for="settings-rank">Overall Rank</label>
+                        <input id="settings-rank" class="search-input" type="number" min="1" placeholder="e.g. 42">
+                    </div>
+                    <div class="filter-group">
+                        <label for="settings-position">Position</label>
+                        <input id="settings-position" class="search-input" type="text" placeholder="e.g. WR">
+                    </div>
+                    <div class="filter-group">
+                        <label for="settings-school">School</label>
+                        <input id="settings-school" class="search-input" type="text" placeholder="e.g. Ohio State">
+                    </div>
+                    <div class="filter-group">
+                        <label for="settings-height">Height</label>
+                        <input id="settings-height" class="search-input" type="text" placeholder="e.g. 6-2">
+                    </div>
+                    <div class="filter-group">
+                        <label for="settings-weight">Weight</label>
+                        <input id="settings-weight" class="search-input" type="text" placeholder="e.g. 205">
+                    </div>
+                    <div class="filter-group">
+                        <label for="settings-jersey">Jersey Number</label>
+                        <input id="settings-jersey" class="search-input" type="text" placeholder="e.g. 1">
+                    </div>
+                    <div class="filter-group">
+                        <label for="settings-url">Player URL</label>
+                        <input id="settings-url" class="search-input" type="url" placeholder="https://...">
+                    </div>
+                    <div class="filter-group">
+                        <label for="settings-grade">Draft Grade</label>
+                        <select id="settings-grade" class="grade-dropdown"></select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="include-scouted-toggle">
+                            <input id="settings-scouted" type="checkbox">
+                            Mark as scouted
+                        </label>
+                    </div>
+                    </div>
+
+                    <div class="filter-group">
+                        <label for="settings-notes">Scouting Notes</label>
+                        <textarea id="settings-notes" class="scouting-notes-input" placeholder="Add your scouting notes here..." rows="6"></textarea>
+                    </div>
+
+                    <button id="settings-add-player-btn" class="randomize-button search-button">Add Player</button>
+                    <p id="settings-message" class="search-empty hidden"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Player Details Section -->
+        <div id="player-details" class="player-details hidden">
+            <div class="player-header">
+                <div class="player-main-info">
+                    <h2 id="player-name"></h2>
+                    <div class="player-meta">
+                        <span id="player-position" class="badge position-badge"></span>
+                        <span id="player-school" class="badge school-badge"></span>
+                        <span id="player-jersey" class="badge jersey-badge" style="display: none;"></span>
+                        <span id="player-rank" class="badge rank-badge clickable-badge" title="Click to toggle visibility">
+                            <span class="hidden-text">Overall Rank: </span>
+                            <span class="rank-value">???</span>
+                        </span>
+                        <span id="player-pos-rank" class="badge pos-rank-badge clickable-badge" title="Click to toggle visibility" style="display: none;">
+                            <span class="hidden-text">Pos Rank: </span>
+                            <span class="pos-rank-value">???</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="player-actions">
+                    <button id="close-player-report-btn" class="action-btn mini-btn remove modal-close-btn" type="button">
+                        ✕ Close
+                    </button>
+                    <button id="mark-scouted-btn" class="action-btn scout-btn">
+                        <span>✓</span> Mark as Scouted
+                    </button>
+                </div>
+            </div>
+
+            <div class="player-body">
+                <div class="player-stats-section">
+                    <h3>Physical Measurements</h3>
+                    <div class="measurements">
+                        <div class="measurement-item">
+                            <span class="measurement-label">Height:</span>
+                            <span id="player-height" class="measurement-value"></span>
+                        </div>
+                        <div class="measurement-item">
+                            <span class="measurement-label">Weight:</span>
+                            <span id="player-weight" class="measurement-value"></span>
+                        </div>
+                    </div>
+
+                    <h3>Statistics</h3>
+                    <div id="player-stats" class="stats-grid">
+                        <!-- Stats populated dynamically -->
+                    </div>
+
+                    <h3>External Resources</h3>
+                    <div class="external-links">
+                        <a id="sports-ref-link" href="#" target="_blank" class="external-link">
+                            📊 Sports Reference
+                        </a>
+                        <a id="espn-link" href="#" target="_blank" class="external-link">
+                            🏈 ESPN
+                        </a>
+                        <a id="tankathon-link" href="#" target="_blank" class="external-link">
+                            📈 Tankathon Profile
+                        </a>
+                    </div>
+                </div>
+
+                <div class="player-notes-section">
+                    <h3>Scouting Notes</h3>
+                    <textarea id="notes-input" placeholder="Add your scouting notes here..." rows="6"></textarea>
+                    <button id="save-notes-btn" class="save-btn">Save Notes</button>
+
+                    <h3>Games Watched</h3>
+                    <textarea id="games-watched-input" placeholder="List games watched for this player (one per line)..." rows="2"></textarea>
+                    <button id="save-games-watched-btn" class="save-btn">Save Games Watched</button>
+
+                    <h3>Overall Grade</h3>
+                    <div id="grade-slot-1" class="grade-slot">
+                        <label id="grade-label-1" for="grade-dropdown-1">Primary Grade</label>
+                        <div class="grade-selector">
+                            <select id="grade-dropdown-1" class="grade-dropdown"></select>
+                        </div>
+                    </div>
+                    <div id="grade-slot-2" class="grade-slot hidden">
+                        <label id="grade-label-2" for="grade-dropdown-2">Secondary Grade</label>
+                        <div class="grade-selector">
+                            <select id="grade-dropdown-2" class="grade-dropdown"></select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
-  </div>
 
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <div id="player-report-overlay" class="modal-overlay hidden"></div>
+
+    <div id="toast-container" class="toast-container"></div>
+
+    <div id="add-to-board-dialog" class="modal-overlay hidden">
+        <div class="modal-card">
+            <h3 id="add-to-board-title">Add to Big Board</h3>
+            <p class="modal-subtext">Choose a placement number, or add this player to the bottom.</p>
+            <div class="filter-group">
+                <label for="add-to-board-rank-input">Board Position</label>
+                <input id="add-to-board-rank-input" class="search-input" type="number" min="1" placeholder="e.g. 15">
+            </div>
+            <div class="modal-actions">
+                <button id="confirm-add-to-rank-btn" class="mini-btn">Add at Position</button>
+                <button id="confirm-add-to-bottom-btn" class="mini-btn">Add to Bottom</button>
+                <button id="cancel-add-to-board-btn" class="mini-btn remove">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
