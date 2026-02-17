@@ -1637,19 +1637,17 @@ class ScoutDatabase:
                 conn = self.get_connection()
                 cursor = conn.cursor()
 
-                if scope == 'position' and position:
-                        cursor.execute('''
-                                SELECT name
-                                FROM players
-                                WHERE position LIKE ?
-                                ORDER BY rank ASC, name ASC
-                        ''', (f'%{position}%',))
-                else:
-                        cursor.execute('''
-                                SELECT name
-                                FROM players
-                                ORDER BY rank ASC, name ASC
-                        ''')
+                board_type = 'position' if scope == 'position' else 'overall'
+                normalized_position = position if board_type == 'position' else None
+                board_id = self._get_or_create_big_board_id(cursor, board_type=board_type, position=normalized_position)
+
+                cursor.execute('''
+                        SELECT p.name
+                        FROM big_board_entries e
+                        JOIN players p ON p.id = e.player_id
+                        WHERE e.board_id = ?
+                        ORDER BY e.rank_order ASC, e.id ASC
+                ''', (board_id,))
 
                 names = [row[0] for row in cursor.fetchall() if row and row[0]]
                 conn.close()

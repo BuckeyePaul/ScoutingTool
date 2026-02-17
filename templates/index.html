@@ -352,6 +352,7 @@
                             <div class="filter-group">
                                 <label for="settings-grade">Draft Grade</label>
                                 <select id="settings-grade" class="grade-dropdown"></select>
+                                <input id="settings-grade-input" class="grade-dropdown hidden" type="number" min="0" max="100" step="1" placeholder="0-100">
                             </div>
                             <div class="filter-group">
                                 <label class="include-scouted-toggle">
@@ -449,12 +450,14 @@
                         <label id="grade-label-1" for="grade-dropdown-1">Primary Grade</label>
                         <div class="grade-selector">
                             <select id="grade-dropdown-1" class="grade-dropdown"></select>
+                            <input id="grade-input-1" class="grade-dropdown hidden" type="number" min="0" max="100" step="1" placeholder="0-100">
                         </div>
                     </div>
                     <div id="grade-slot-2" class="grade-slot hidden">
                         <label id="grade-label-2" for="grade-dropdown-2">Secondary Grade</label>
                         <div class="grade-selector">
                             <select id="grade-dropdown-2" class="grade-dropdown"></select>
+                            <input id="grade-input-2" class="grade-dropdown hidden" type="number" min="0" max="100" step="1" placeholder="0-100">
                         </div>
                     </div>
                 </div>

@@ -431,10 +431,18 @@ function setupEventListeners() {
  
     // Grade dropdowns
     document.getElementById('grade-dropdown-1').addEventListener('change', function() {
-        updateGrade(this.value, 'primary');
+        const system = getGradeSystemForSlot('primary');
+        updateGrade(formatGradeForSystem(system, this.value), 'primary');
     });
     document.getElementById('grade-dropdown-2').addEventListener('change', function() {
-        updateGrade(this.value, 'secondary');
+        const system = getGradeSystemForSlot('secondary');
+        updateGrade(formatGradeForSystem(system, this.value), 'secondary');
+    });
+    document.getElementById('grade-input-1').addEventListener('change', function() {
+        updateGrade(formatGradeForSystem('numerical', this.value), 'primary');
+    });
+    document.getElementById('grade-input-2').addEventListener('change', function() {
+        updateGrade(formatGradeForSystem('numerical', this.value), 'secondary');
     });
  
     document.getElementById('player-board-ranks-toggle').addEventListener('click', toggleBoardRanksVisibility);
@@ -575,19 +583,51 @@ async function shutdownApplication() {
         stopAppBtn.disabled = true;
     }
 
+    const closeWindowWithFallback = () => {
+        try {
+            window.open('', '_self');
+            window.close();
+        } catch (error) {
+            console.error('Window close failed:', error);
+        }
+
+        setTimeout(() => {
+            if (!window.closed) {
+                document.body.innerHTML = '<div style="font-family: sans-serif; padding: 28px; color: #fff; background: #0f172a; min-height: 100vh;"><h2 style="margin-bottom: 10px;">Scouting App stopped</h2><p>The local server process has been stopped. You can safely close this tab.</p></div>';
+            }
+        }, 400);
+    };
+
     try {
-        await fetch('/api/system/shutdown', { method: 'POST' });
-        showToast('Stopping App', 'Server is shutting down. This window can now be closed.', 'success', 6000);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+        let response = null;
+        let result = null;
+        try {
+            response = await fetch('/api/system/shutdown', {
+                method: 'POST',
+                signal: controller.signal,
+                keepalive: true
+            });
+            clearTimeout(timeoutId);
+            result = await response.json().catch(() => ({}));
+        } finally {
+            clearTimeout(timeoutId);
+        }
+
+        if (response && response.ok && result?.success !== false) {
+            showToast('Stopping App', 'Server is shutting down. Closing this tab now.', 'success', 3500);
+        } else {
+            const errorText = result?.error || 'Shutdown request failed, attempting to close this tab.';
+            showToast('Shutdown Warning', errorText, 'error', 4500);
+        }
     } catch (error) {
         console.error('Error shutting down app:', error);
+        showToast('Shutdown Warning', 'Could not confirm shutdown response. Attempting to close this tab.', 'error', 4500);
     }
 
-    setTimeout(() => {
-        window.close();
-        if (!window.closed) {
-            window.location.href = 'about:blank';
-        }
-    }, 500);
+    setTimeout(closeWindowWithFallback, 300);
 }
 
 async function runSettingsTool(endpoint, buttonId, successMessage) {
@@ -1415,6 +1455,49 @@ function getSystemDisplayName(system) {
     return 'Grade';
 }
 
+function parseNumericalGradeValue(rawGrade) {
+    if (rawGrade === null || rawGrade === undefined) {
+        return '';
+    }
+
+    const gradeText = String(rawGrade).trim();
+    if (!gradeText) {
+        return '';
+    }
+
+    const prefixedMatch = gradeText.match(/^numerical\s*-\s*(\d{1,3})$/i);
+    if (prefixedMatch) {
+        const value = Number(prefixedMatch[1]);
+        const clamped = Math.max(0, Math.min(100, value));
+        return String(clamped);
+    }
+
+    const numericValue = Number(gradeText);
+    if (!Number.isFinite(numericValue)) {
+        return '';
+    }
+
+    const clamped = Math.max(0, Math.min(100, Math.round(numericValue)));
+    return String(clamped);
+}
+
+function formatGradeForSystem(system, rawValue) {
+    const systemKey = (system || '').trim().toLowerCase();
+    const valueText = rawValue === null || rawValue === undefined ? '' : String(rawValue).trim();
+
+    if (systemKey === 'numerical') {
+        const parsed = parseNumericalGradeValue(valueText);
+        return parsed ? `Numerical - ${parsed}` : '';
+    }
+
+    return valueText;
+}
+
+function getGradeSystemForSlot(slot = 'primary') {
+    const systems = (appSettings.gradingSystems || ['round']).slice(0, 2);
+    return slot === 'secondary' ? (systems[1] || '') : (systems[0] || 'round');
+}
+
 function buildGradeOptionsForSystem(system) {
     const options = [{ value: '', label: 'Not Graded' }];
 
@@ -1487,31 +1570,94 @@ function populateGradeDropdowns(playerGrade = null) {
 
     const playerGradeSelect1 = document.getElementById('grade-dropdown-1');
     const playerGradeSelect2 = document.getElementById('grade-dropdown-2');
+    const playerGradeInput1 = document.getElementById('grade-input-1');
+    const playerGradeInput2 = document.getElementById('grade-input-2');
     const settingsGradeSelect = document.getElementById('settings-grade');
+    const settingsGradeInput = document.getElementById('settings-grade-input');
     const gradeSlot1 = document.getElementById('grade-slot-1');
     const gradeSlot2 = document.getElementById('grade-slot-2');
     const gradeLabel1 = document.getElementById('grade-label-1');
     const gradeLabel2 = document.getElementById('grade-label-2');
 
     const system1 = systems[0] || 'round';
-    const options1 = buildGradeOptionsForSystem(system1);
-    populateSelectOptions(playerGradeSelect1, options1, playerPrimaryGrade);
+    if (system1 === 'numerical') {
+        if (playerGradeSelect1) {
+            playerGradeSelect1.classList.add('hidden');
+        }
+        if (playerGradeInput1) {
+            playerGradeInput1.classList.remove('hidden');
+            playerGradeInput1.value = parseNumericalGradeValue(playerPrimaryGrade);
+        }
+    } else {
+        const options1 = buildGradeOptionsForSystem(system1);
+        populateSelectOptions(playerGradeSelect1, options1, playerPrimaryGrade);
+        if (playerGradeInput1) {
+            playerGradeInput1.classList.add('hidden');
+            playerGradeInput1.value = '';
+        }
+        if (playerGradeSelect1) {
+            playerGradeSelect1.classList.remove('hidden');
+        }
+    }
+
     gradeLabel1.textContent = getSystemDisplayName(system1);
     gradeSlot1.classList.remove('hidden');
 
     if (systems.length > 1) {
         const system2 = systems[1];
-        const options2 = buildGradeOptionsForSystem(system2);
-        populateSelectOptions(playerGradeSelect2, options2, playerSecondaryGrade);
+        if (system2 === 'numerical') {
+            if (playerGradeSelect2) {
+                playerGradeSelect2.classList.add('hidden');
+            }
+            if (playerGradeInput2) {
+                playerGradeInput2.classList.remove('hidden');
+                playerGradeInput2.value = parseNumericalGradeValue(playerSecondaryGrade);
+            }
+        } else {
+            const options2 = buildGradeOptionsForSystem(system2);
+            populateSelectOptions(playerGradeSelect2, options2, playerSecondaryGrade);
+            if (playerGradeInput2) {
+                playerGradeInput2.classList.add('hidden');
+                playerGradeInput2.value = '';
+            }
+            if (playerGradeSelect2) {
+                playerGradeSelect2.classList.remove('hidden');
+            }
+        }
+
         gradeLabel2.textContent = getSystemDisplayName(system2);
         gradeSlot2.classList.remove('hidden');
     } else {
         populateSelectOptions(playerGradeSelect2, [{ value: '', label: 'Not Graded' }], '');
+        if (playerGradeInput2) {
+            playerGradeInput2.classList.add('hidden');
+            playerGradeInput2.value = '';
+        }
+        if (playerGradeSelect2) {
+            playerGradeSelect2.classList.remove('hidden');
+        }
         gradeSlot2.classList.add('hidden');
     }
 
-    const settingsOptions = buildGradeOptionsForSystem(system1);
-    populateSelectOptions(settingsGradeSelect, settingsOptions, settingsGradeSelect ? settingsGradeSelect.value : '');
+    if (system1 === 'numerical') {
+        if (settingsGradeSelect) {
+            settingsGradeSelect.classList.add('hidden');
+        }
+        if (settingsGradeInput) {
+            settingsGradeInput.classList.remove('hidden');
+            settingsGradeInput.value = parseNumericalGradeValue(settingsGradeInput.value || settingsGradeSelect?.value || '');
+        }
+    } else {
+        const settingsOptions = buildGradeOptionsForSystem(system1);
+        populateSelectOptions(settingsGradeSelect, settingsOptions, settingsGradeSelect ? settingsGradeSelect.value : '');
+        if (settingsGradeInput) {
+            settingsGradeInput.classList.add('hidden');
+            settingsGradeInput.value = '';
+        }
+        if (settingsGradeSelect) {
+            settingsGradeSelect.classList.remove('hidden');
+        }
+    }
 }
 
 function setBigBoardType(type) {
@@ -1671,7 +1817,12 @@ async function addPlayerFromSettings() {
         weight: document.getElementById('settings-weight').value.trim(),
         jersey_number: document.getElementById('settings-jersey').value.trim(),
         player_url: document.getElementById('settings-url').value.trim(),
-        grade: document.getElementById('settings-grade').value,
+        grade: formatGradeForSystem(
+            getGradeSystemForSlot('primary'),
+            document.getElementById('settings-grade-input')?.classList.contains('hidden')
+                ? document.getElementById('settings-grade').value
+                : document.getElementById('settings-grade-input').value
+        ),
         notes: document.getElementById('settings-notes').value.trim(),
         scouted: document.getElementById('settings-scouted').checked
     };
@@ -1707,6 +1858,10 @@ async function addPlayerFromSettings() {
         document.getElementById('settings-jersey').value = '';
         document.getElementById('settings-url').value = '';
         document.getElementById('settings-grade').value = '';
+        const settingsGradeInput = document.getElementById('settings-grade-input');
+        if (settingsGradeInput) {
+            settingsGradeInput.value = '';
+        }
         document.getElementById('settings-notes').value = '';
         document.getElementById('settings-scouted').checked = false;
 
@@ -2098,20 +2253,7 @@ function displayPlayerDetails(player) {
     document.getElementById('games-watched-input').value = player.games_watched || '';
  
     // Update grade
-    const gradeDropdown1 = document.getElementById('grade-dropdown-1');
-    const gradeDropdown2 = document.getElementById('grade-dropdown-2');
     populateGradeDropdowns(player.grade || '');
-    if (player.grade) {
-        gradeDropdown1.value = player.grade;
-    } else {
-        gradeDropdown1.value = '';
-    }
-
-    if (player.grade_secondary) {
-        gradeDropdown2.value = player.grade_secondary;
-    } else {
-        gradeDropdown2.value = '';
-    }
  
     // Update scout button
     const scoutBtn = document.getElementById('mark-scouted-btn');
