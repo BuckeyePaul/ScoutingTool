@@ -1778,6 +1778,10 @@ async function searchPlayers() {
     const schoolSearch = document.getElementById('school-search-input').value.trim();
     const includeScouted = document.getElementById('search-include-scouted').checked;
 
+    if (currentPlayerSourceTab === 'search-tab') {
+        closePlayerReport();
+    }
+
     searchBtn.disabled = true;
 
     try {
@@ -2189,7 +2193,8 @@ function renderPlayerBoardRanks(player) {
         appendRankPill(positionalRow, 'Personal Pos Rank', Math.round(personalPosRank));
     }
 
-    if (player.weighted_average_rank) {
+    const boardRankCount = boardRanks.length;
+    if (player.weighted_average_rank && boardRankCount > 1) {
         const useCustomWeights = document.getElementById('use-board-weights-checkbox')?.checked;
         const averageRankLabel = useCustomWeights ? 'Weighted Avg' : 'Average Rank';
         appendRankPill(overallRow, averageRankLabel, Number(player.weighted_average_rank).toFixed(1));

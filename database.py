@@ -1121,6 +1121,25 @@ class ScoutDatabase:
                 normalized = re.sub(r'\b(jr|sr|ii|iii|iv|v)\b', '', normalized)
                 normalized = re.sub(r'[^a-z0-9\s-]', '', normalized)
                 normalized = re.sub(r'\s+', ' ', normalized)
+
+                tokens = normalized.strip().split()
+                collapsed_tokens = []
+                index = 0
+                while index < len(tokens):
+                        token = tokens[index]
+                        if len(token) == 1 and token.isalpha():
+                                initials = [token]
+                                index += 1
+                                while index < len(tokens) and len(tokens[index]) == 1 and tokens[index].isalpha():
+                                        initials.append(tokens[index])
+                                        index += 1
+                                collapsed_tokens.append(''.join(initials))
+                                continue
+
+                        collapsed_tokens.append(token)
+                        index += 1
+
+                normalized = ' '.join(collapsed_tokens)
                 return normalized.strip()
 
         @staticmethod

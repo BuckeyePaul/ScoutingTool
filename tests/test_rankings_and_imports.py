@@ -137,6 +137,32 @@ class RankingsAndImportsTests(unittest.TestCase):
         self.assertEqual(second_merge['groups_merged'], 0)
         self.assertEqual(second_merge['players_removed'], 0)
 
+    def test_merge_duplicates_collapses_initial_variants(self):
+        conn = self._conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO players (name, school)
+            VALUES ('L.T. Overton', 'Alabama'), ('LT Overton', '')
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        merge_result = self.db.merge_player_name_duplicates()
+        self.assertTrue(merge_result['success'])
+        self.assertGreaterEqual(merge_result['players_removed'], 1)
+
+        conn = self._conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT name, school FROM players WHERE LOWER(name) LIKE '%overton%'")
+        rows = cursor.fetchall()
+        conn.close()
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0][0] in ('L.T. Overton', 'LT Overton'))
+        self.assertEqual(rows[0][1], 'Alabama')
+
 
 if __name__ == '__main__':
     unittest.main()

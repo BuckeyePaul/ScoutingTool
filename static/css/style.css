@@ -381,6 +381,7 @@ body[data-font='lato'] {
     margin-top: 12px;
     max-height: 620px;
     overflow-y: auto;
+    padding-top: 4px;
 }
 
 .bigboard-list {
