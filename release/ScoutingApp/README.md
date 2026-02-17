@@ -116,6 +116,24 @@ python -m unittest discover -s tests -p "test_*.py"
 
 Current tests cover core ranking/import invariants and duplicate merge idempotency.
 
+## Windows Packaging (.exe + .zip)
+
+Build a distributable one-file executable and release zip:
+
+```powershell
+.\build_windows_package.ps1
+```
+
+This produces:
+
+- `release/ScoutingApp/ScoutingApp.exe`
+- `release/ScoutingApp/RUN.txt`
+- `release/ScoutingApp-Windows.zip`
+
+The executable uses `launcher.py` + Waitress to start the app on `http://127.0.0.1:5000` and opens your browser automatically.
+
+To stop the running packaged app, use the top-right **Stop App** button in the web UI.
+
 ## Troubleshooting
 
 - If board imports seem stale, run **Recalculate Player Rankings**.

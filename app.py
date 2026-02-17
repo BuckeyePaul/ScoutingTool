@@ -7,6 +7,7 @@ import random
 import urllib.parse
 import os
 import sys
+import signal
 import threading
 import time
 from pathlib import Path
@@ -291,10 +292,7 @@ def update_rankings():
 
 @app.route('/api/system/shutdown', methods=['POST'])
 def shutdown_system():
-    """Shut down local app process (localhost only)."""
-    remote_addr = request.remote_addr or ''
-    if remote_addr not in {'127.0.0.1', '::1', 'localhost'}:
-        return jsonify({'success': False, 'error': 'Shutdown is only allowed from localhost.'}), 403
+    """Shut down local app process."""
 
     shutdown_func = request.environ.get('werkzeug.server.shutdown')
     if shutdown_func:
@@ -303,6 +301,12 @@ def shutdown_system():
 
     def _terminate_process():
         time.sleep(0.25)
+        pid = os.getpid()
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+        time.sleep(0.15)
         os._exit(0)
 
     threading.Thread(target=_terminate_process, daemon=True).start()
