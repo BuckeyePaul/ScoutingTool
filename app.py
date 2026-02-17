@@ -1,5 +1,6 @@
-﻿from flask import Flask, render_template, jsonify, request
+﻿from flask import Flask, render_template, jsonify, request, Response
 from database import ScoutDatabase
+from consensus_scraper import scrape_consensus_big_board_2026, scrape_nflmockdraftdatabase_big_board
 import random
 import urllib.parse
 import subprocess
@@ -126,6 +127,19 @@ def update_games_watched(player_id):
     data = request.get_json()
     games_watched = data.get('games_watched', '')
     db.update_games_watched(player_id, games_watched)
+    return jsonify({'success': True})
+
+@app.route('/api/player/<int:player_id>/profile', methods=['POST'])
+def update_player_profile(player_id):
+    """Update editable player profile fields"""
+    data = request.get_json() or {}
+    try:
+        db.update_player_profile(player_id, data)
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
     return jsonify({'success': True})
 
 @app.route('/api/settings/player', methods=['POST'])
@@ -262,6 +276,103 @@ def update_rankings():
         return jsonify({'success': False, 'error': 'Ranking update timed out'}), 500
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/settings/import-big-boards', methods=['POST'])
+def import_big_boards():
+    """Import external big board text files and normalize rankings"""
+    data = request.get_json() or {}
+    boards = data.get('boards', [])
+    weighting_mode = (data.get('weighting_mode') or 'equal').strip().lower()
+    if weighting_mode not in {'equal', 'weighted'}:
+        weighting_mode = 'equal'
+
+    result = db.import_external_big_boards(boards, weighting_mode=weighting_mode)
+    status_code = 200 if result.get('success') else 400
+    return jsonify(result), status_code
+
+@app.route('/api/settings/import-consensus-board', methods=['POST'])
+def import_consensus_board():
+    """Scrape and import consensus board data"""
+    try:
+        players = scrape_consensus_big_board_2026()
+        if not players:
+            return jsonify({'success': False, 'error': 'No players found from consensus source.'}), 502
+
+        result = db.import_consensus_board(players)
+        status_code = 200 if result.get('success') else 400
+        return jsonify(result), status_code
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/settings/import-nflmock-board-url', methods=['POST'])
+def import_nflmock_board_url():
+    """Scrape and import an NFLMockDraftDatabase big board URL."""
+    data = request.get_json() or {}
+    board_url = (data.get('url') or '').strip()
+    custom_board_name = (data.get('board_name') or '').strip()
+    if not board_url:
+        return jsonify({'success': False, 'error': 'Board URL is required.'}), 400
+
+    try:
+        scraped = scrape_nflmockdraftdatabase_big_board(board_url)
+        players = scraped.get('players') or []
+        scraped_name = scraped.get('board_name') or 'Imported NFLMockDraftDatabase Board'
+        board_name = custom_board_name or scraped_name
+
+        if not players:
+            return jsonify({'success': False, 'error': 'No players found from the provided board URL.'}), 502
+
+        result = db.import_nflmock_url_board(players, board_name)
+        status_code = 200 if result.get('success') else 400
+        return jsonify(result), status_code
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/settings/merge-player-duplicates', methods=['POST'])
+def merge_player_duplicates():
+    """Merge duplicate players created from name variants (suffix/punctuation/casing)."""
+    result = db.merge_player_name_duplicates()
+    status_code = 200 if result.get('success') else 400
+    return jsonify(result), status_code
+
+@app.route('/api/settings/rank-boards')
+def get_rank_boards():
+    """Get board rank settings including weights and primary board"""
+    boards = db.get_rank_boards_config()
+    return jsonify({'success': True, 'boards': boards})
+
+@app.route('/api/settings/rank-boards', methods=['POST'])
+def update_rank_boards():
+    """Update board weights and primary board selection"""
+    data = request.get_json() or {}
+    board_updates = data.get('boards', [])
+    result = db.update_rank_board_weights(board_updates)
+    status_code = 200 if result.get('success') else 400
+    return jsonify(result), status_code
+
+@app.route('/api/settings/export-big-board')
+def export_big_board():
+    """Export normalized rankings in text format"""
+    scope = (request.args.get('scope') or 'overall').strip().lower()
+    if scope not in {'overall', 'position'}:
+        scope = 'overall'
+
+    position = (request.args.get('position') or '').strip()
+    if scope == 'position' and not position:
+        return jsonify({'success': False, 'error': 'Position is required for positional export.'}), 400
+
+    board_text = db.export_big_board_text(scope=scope, position=position if scope == 'position' else None)
+    filename = f"big_board_{position.lower()}.txt" if scope == 'position' else 'big_board_overall.txt'
+
+    return Response(
+        board_text,
+        mimetype='text/plain; charset=utf-8',
+        headers={
+            'Content-Disposition': f'attachment; filename="{filename}"'
+        }
+    )
 
 def generate_sports_reference_url(player):
     """Generate Sports Reference URL for player"""
