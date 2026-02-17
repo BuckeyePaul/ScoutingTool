@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NFL Draft Scout Assistant</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -222,10 +223,11 @@
                     <div class="settings-block">
                         <h3 class="settings-heading">App Tools</h3>
                         <div class="settings-tool-actions">
-                            <button id="refresh-logos-btn" class="mini-btn">Refresh Downloaded Logos</button>
-                            <button id="update-rankings-btn" class="mini-btn">Update Rankings from Tankathon</button>
                             <button id="import-consensus-btn" class="mini-btn">Import 2026 Consensus Board</button>
+                            <button id="update-rankings-btn" class="mini-btn">Import Tankathon Board</button>
+                            <button id="recalculate-rankings-btn" class="mini-btn">Recalculate Player Rankings</button>
                             <button id="merge-duplicates-btn" class="mini-btn">Merge Duplicate Player Variants</button>
+                            <button id="refresh-logos-btn" class="mini-btn">Refresh Downloaded Logos</button>
                         </div>
                         <p id="settings-tools-message" class="search-empty hidden"></p>
                     </div>

@@ -393,6 +393,7 @@ function setupEventListeners() {
     document.getElementById('toggle-add-player-btn').addEventListener('click', toggleAddPlayerPanel);
     document.getElementById('refresh-logos-btn').addEventListener('click', refreshDownloadedLogos);
     document.getElementById('update-rankings-btn').addEventListener('click', updateRankingsFromTankathon);
+    document.getElementById('recalculate-rankings-btn').addEventListener('click', recalculatePlayerRankings);
     document.getElementById('import-consensus-btn').addEventListener('click', importConsensusBoard);
     document.getElementById('import-nflmock-url-btn').addEventListener('click', openImportNflmockUrlDialog);
     document.getElementById('merge-duplicates-btn').addEventListener('click', mergeDuplicatePlayers);
@@ -534,7 +535,12 @@ async function refreshDownloadedLogos() {
 }
 
 async function updateRankingsFromTankathon() {
-    await runSettingsTool('/api/settings/update-rankings', 'update-rankings-btn', 'Rankings updated from Tankathon.');
+    await runSettingsTool('/api/settings/update-rankings', 'update-rankings-btn', 'Tankathon data fetched and imported.');
+    loadRankBoardSettings();
+}
+
+async function recalculatePlayerRankings() {
+    await runSettingsTool('/api/settings/recalculate-player-rankings', 'recalculate-rankings-btn', 'Player rankings recalculated.');
     loadRankBoardSettings();
 }
 
@@ -2608,7 +2614,9 @@ function renderPlayerBoardRanks(player) {
     }
 
     if (player.weighted_average_rank) {
-        appendRankPill(overallRow, 'Weighted Avg', Number(player.weighted_average_rank).toFixed(1));
+        const useCustomWeights = document.getElementById('use-board-weights-checkbox')?.checked;
+        const averageRankLabel = useCustomWeights ? 'Weighted Avg' : 'Average Rank';
+        appendRankPill(overallRow, averageRankLabel, Number(player.weighted_average_rank).toFixed(1));
     }
 
     boardRanks.forEach(board => {

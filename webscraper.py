@@ -198,24 +198,6 @@ if __name__ == "__main__":
         save_to_json(players_data)
                 
         print(f"\nSuccessfully scraped {len(players_data)} players!")
-        
-        # Initialize database and import data
-        print("\nInitializing scout database...")
-        try:
-            from database import ScoutDatabase
-            db = ScoutDatabase()
-            imported = db.import_players_from_json()
-            print(f"Database initialized with {imported} new players!")
-            
-            # Calculate positional ranks
-            print("\nCalculating positional ranks...")
-            db.calculate_positional_ranks()
-            
-        except Exception as e:
-            print(f"Warning: Could not initialize database: {e}")
-            print("You can manually import data later by running:")
-            print(" from database import ScoutDatabase")
-            print(" db = ScoutDatabase()")
-            print(" db.import_players_from_json()")
+        print("Tankathon fetch complete. Use the app action to import/update database records.")
     else:
         print("Failed to scrape data. Please check the website structure.")

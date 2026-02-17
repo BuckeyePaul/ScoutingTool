@@ -256,7 +256,7 @@ def refresh_logos():
 
 @app.route('/api/settings/update-rankings', methods=['POST'])
 def update_rankings():
-    """Run Tankathon webscraper to refresh rankings"""
+    """Run Tankathon webscraper to refresh source data and import without recalculating rankings."""
     try:
         script_path = Path(__file__).with_name('webscraper.py')
         result = subprocess.run(
@@ -268,12 +268,35 @@ def update_rankings():
         )
 
         output = (result.stdout or '') + ('\n' + result.stderr if result.stderr else '')
+        if result.returncode == 0:
+            import_result = db.import_players_from_json(recalculate_rankings=False)
+            if not import_result.get('success'):
+                return jsonify({
+                    'success': False,
+                    'error': import_result.get('error') or 'Tankathon import failed after fetch.',
+                    'output': output.strip()
+                }), 500
+
+            output = f"{output.strip()}\nImported {import_result.get('imported', 0)} players without recalculating ranks."
+
         return jsonify({
             'success': result.returncode == 0,
             'output': output.strip()
         }), (200 if result.returncode == 0 else 500)
     except subprocess.TimeoutExpired:
         return jsonify({'success': False, 'error': 'Ranking update timed out'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/settings/recalculate-player-rankings', methods=['POST'])
+def recalculate_player_rankings():
+    """Recalculate default and positional player rankings."""
+    try:
+        ranked_count = db.recalculate_default_rankings()
+        return jsonify({
+            'success': True,
+            'output': f'Recalculated rankings for {ranked_count} players.'
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
