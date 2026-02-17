@@ -1,13 +1,29 @@
 ﻿from flask import Flask, render_template, jsonify, request, Response
 from database import ScoutDatabase
 from consensus_scraper import scrape_consensus_big_board_2026, scrape_nflmockdraftdatabase_big_board
+from webscraper import scrape_nfl_big_board, save_to_json as save_tankathon_json
+from download_logos import get_schools_from_database, get_schools_from_json, get_school_logos
 import random
 import urllib.parse
-import subprocess
+import os
 import sys
+import threading
+import time
 from pathlib import Path
 
-app = Flask(__name__)
+def _runtime_base_path():
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent
+
+
+BASE_PATH = _runtime_base_path()
+
+app = Flask(
+    __name__,
+    template_folder=str(BASE_PATH / 'templates'),
+    static_folder=str(BASE_PATH / 'static')
+)
 db = ScoutDatabase()
 
 @app.route('/')
@@ -233,60 +249,64 @@ def autosort_big_board():
 
 @app.route('/api/settings/refresh-logos', methods=['POST'])
 def refresh_logos():
-    """Run logo downloader script"""
+    """Refresh school logos using in-process downloader logic."""
     try:
-        script_path = Path(__file__).with_name('download_logos.py')
-        result = subprocess.run(
-            [sys.executable, str(script_path)],
-            capture_output=True,
-            text=True,
-            cwd=Path(__file__).parent,
-            timeout=300
-        )
+        schools = get_schools_from_database() or get_schools_from_json()
+        if not schools:
+            return jsonify({'success': False, 'error': 'No schools found to refresh logos.'}), 400
 
-        output = (result.stdout or '') + ('\n' + result.stderr if result.stderr else '')
+        get_school_logos(schools)
         return jsonify({
-            'success': result.returncode == 0,
-            'output': output.strip()
-        }), (200 if result.returncode == 0 else 500)
-    except subprocess.TimeoutExpired:
-        return jsonify({'success': False, 'error': 'Logo refresh timed out'}), 500
+            'success': True,
+            'output': f'Logo refresh complete for {len(schools)} schools.'
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/settings/update-rankings', methods=['POST'])
 def update_rankings():
-    """Run Tankathon webscraper to refresh source data and import without recalculating rankings."""
+    """Fetch Tankathon data and import without recalculating rankings."""
     try:
-        script_path = Path(__file__).with_name('webscraper.py')
-        result = subprocess.run(
-            [sys.executable, str(script_path)],
-            capture_output=True,
-            text=True,
-            cwd=Path(__file__).parent,
-            timeout=600
-        )
+        players_data = scrape_nfl_big_board()
+        if not players_data:
+            return jsonify({'success': False, 'error': 'Failed to fetch Tankathon big board data.'}), 502
 
-        output = (result.stdout or '') + ('\n' + result.stderr if result.stderr else '')
-        if result.returncode == 0:
-            import_result = db.import_players_from_json(recalculate_rankings=False)
-            if not import_result.get('success'):
-                return jsonify({
-                    'success': False,
-                    'error': import_result.get('error') or 'Tankathon import failed after fetch.',
-                    'output': output.strip()
-                }), 500
+        output_json_path = Path.cwd() / 'nfl_big_board.json'
+        save_tankathon_json(players_data, filename=str(output_json_path))
 
-            output = f"{output.strip()}\nImported {import_result.get('imported', 0)} players without recalculating ranks."
+        import_result = db.import_players_from_json(str(output_json_path), recalculate_rankings=False)
+        if not import_result.get('success'):
+            return jsonify({
+                'success': False,
+                'error': import_result.get('error') or 'Tankathon import failed after fetch.'
+            }), 500
 
         return jsonify({
-            'success': result.returncode == 0,
-            'output': output.strip()
-        }), (200 if result.returncode == 0 else 500)
-    except subprocess.TimeoutExpired:
-        return jsonify({'success': False, 'error': 'Ranking update timed out'}), 500
+            'success': True,
+            'output': f"Fetched {len(players_data)} Tankathon players and imported {import_result.get('imported', 0)} without recalculating ranks."
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/system/shutdown', methods=['POST'])
+def shutdown_system():
+    """Shut down local app process (localhost only)."""
+    remote_addr = request.remote_addr or ''
+    if remote_addr not in {'127.0.0.1', '::1', 'localhost'}:
+        return jsonify({'success': False, 'error': 'Shutdown is only allowed from localhost.'}), 403
+
+    shutdown_func = request.environ.get('werkzeug.server.shutdown')
+    if shutdown_func:
+        shutdown_func()
+        return jsonify({'success': True, 'output': 'Server is shutting down.'})
+
+    def _terminate_process():
+        time.sleep(0.25)
+        os._exit(0)
+
+    threading.Thread(target=_terminate_process, daemon=True).start()
+    return jsonify({'success': True, 'output': 'Application process is shutting down.'})
 
 @app.route('/api/settings/recalculate-player-rankings', methods=['POST'])
 def recalculate_player_rankings():

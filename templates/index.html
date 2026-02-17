@@ -14,6 +14,9 @@
     <div class="container">
         <!-- Header -->
         <header class="header">
+            <div class="header-actions">
+                <button id="stop-app-btn" class="mini-btn remove header-stop-btn" type="button">Stop App</button>
+            </div>
             <h1>🏈 NFL Draft Scout Assistant</h1>
             <div class="stats-bar">
                 <div class="stat-item">
@@ -548,6 +551,10 @@
         </div>
     </div>
 
+    <script src="{{ url_for('static', filename='js/api-client.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/ui-feedback.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/bigboard-controller.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/player-report-controller.js') }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

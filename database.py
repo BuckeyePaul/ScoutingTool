@@ -78,6 +78,7 @@ class ScoutDatabase:
 
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_player_board_ranks_board_id ON player_board_ranks(board_id)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_player_board_ranks_player_id ON player_board_ranks(player_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_player_board_ranks_board_rank ON player_board_ranks(board_id, board_rank)')
 
                 cursor.execute('''
                         INSERT OR IGNORE INTO rank_boards (board_key, board_name, source_type, weight, is_primary, created_at)
@@ -115,6 +116,11 @@ class ScoutDatabase:
                                 FOREIGN KEY(player_id) REFERENCES players(id) ON DELETE CASCADE
                         )
                 ''')
+
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_players_rank ON players(rank)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_players_scouted_rank ON players(scouted, rank)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_players_school ON players(school)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_big_board_entries_board_rank ON big_board_entries(board_id, rank_order)')
 
                 conn.commit()
                 conn.close()
@@ -425,7 +431,7 @@ class ScoutDatabase:
                         if player.get('stats'):
                                 try:
                                         player['stats'] = json.loads(player['stats'])
-                                except:
+                                except Exception:
                                         player['stats'] = {}
                         players.append(player)
 
@@ -481,7 +487,7 @@ class ScoutDatabase:
                         if player.get('stats'):
                                 try:
                                         player['stats'] = json.loads(player['stats'])
-                                except:
+                                except Exception:
                                         player['stats'] = {}
                         players.append(player)
 
@@ -506,7 +512,7 @@ class ScoutDatabase:
                 if player.get('stats'):
                         try:
                                 player['stats'] = json.loads(player['stats'])
-                        except:
+                        except Exception:
                                 player['stats'] = {}
 
                 cursor.execute('''
