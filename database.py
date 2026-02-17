@@ -78,6 +78,7 @@ class ScoutDatabase:
 
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_player_board_ranks_board_id ON player_board_ranks(board_id)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_player_board_ranks_player_id ON player_board_ranks(player_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_player_board_ranks_board_rank ON player_board_ranks(board_id, board_rank)')
 
                 cursor.execute('''
                         INSERT OR IGNORE INTO rank_boards (board_key, board_name, source_type, weight, is_primary, created_at)
@@ -115,6 +116,11 @@ class ScoutDatabase:
                                 FOREIGN KEY(player_id) REFERENCES players(id) ON DELETE CASCADE
                         )
                 ''')
+
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_players_rank ON players(rank)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_players_scouted_rank ON players(scouted, rank)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_players_school ON players(school)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_big_board_entries_board_rank ON big_board_entries(board_id, rank_order)')
 
                 conn.commit()
                 conn.close()
@@ -293,7 +299,7 @@ class ScoutDatabase:
                 self.calculate_positional_ranks()
                 return len(player_sort_rows)
         
-        def import_players_from_json (self, json_file='nfl_big_board.json'):
+        def import_players_from_json (self, json_file='nfl_big_board.json', recalculate_rankings=True):
                 """Import players from the JSON generated from Tankathon Webscraper"""
                 try:
                         with open(json_file, 'r', encoding ='utf-8') as f:
@@ -346,7 +352,7 @@ class ScoutDatabase:
 
                                 except Exception as e:
                                         print(f"Error importing player {player.get('name')}: {e}")
-                                        return 0
+                                        return {'success': False, 'error': f"Error importing player {player.get('name')}: {e}", 'imported': imported}
 
                         self._upsert_board_rank_entries(
                                 cursor,
@@ -360,13 +366,19 @@ class ScoutDatabase:
 
                         conn.commit()
                         conn.close()
-                        self.recalculate_default_rankings()
-                        print(f"imported {imported} new players")
-                        return imported
+                        if recalculate_rankings:
+                                self.recalculate_default_rankings()
+
+                        print(f"imported {imported} players from Tankathon JSON")
+                        return {
+                                'success': True,
+                                'imported': imported,
+                                'recalculated': bool(recalculate_rankings)
+                        }
                 
                 except Exception as e:
                         print(f"Error importing from JSON: {e}")
-                        return 0
+                        return {'success': False, 'error': str(e), 'imported': 0}
 
         def calculate_positional_ranks(self):
                 """Calculate positional ranks for players based on overall rank within each position"""
@@ -419,7 +431,7 @@ class ScoutDatabase:
                         if player.get('stats'):
                                 try:
                                         player['stats'] = json.loads(player['stats'])
-                                except:
+                                except Exception:
                                         player['stats'] = {}
                         players.append(player)
 
@@ -475,7 +487,7 @@ class ScoutDatabase:
                         if player.get('stats'):
                                 try:
                                         player['stats'] = json.loads(player['stats'])
-                                except:
+                                except Exception:
                                         player['stats'] = {}
                         players.append(player)
 
@@ -500,7 +512,7 @@ class ScoutDatabase:
                 if player.get('stats'):
                         try:
                                 player['stats'] = json.loads(player['stats'])
-                        except:
+                        except Exception:
                                 player['stats'] = {}
 
                 cursor.execute('''

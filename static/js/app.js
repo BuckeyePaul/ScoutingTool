@@ -7,15 +7,10 @@ let allPlayers = [];
 let boardRanksRevealed = false;
 let bigBoardType = 'overall';
 let currentBigBoardPosition = null;
-let draggedBoardPlayerId = null;
-let draggedAddPlayerId = null;
-let draggedSource = null;
-let boardDropPlaceholder = null;
-let currentBigBoardPlayerIds = new Set();
 let currentPlayerSourceTab = null;
-let lastDropIndex = null;
-let pendingAddToBoardPlayer = null;
 let importedBoardFiles = [];
+let bigBoardController = null;
+let playerReportController = null;
 const SETTINGS_STORAGE_KEY = 'scout_app_settings';
 const ACTIVE_TAB_STORAGE_KEY = 'scout_active_tab';
 const DEFAULT_APP_SETTINGS = {
@@ -76,6 +71,94 @@ function getSchoolLogo(schoolName) {
     return `static/logos/${filename}.png`;
 }
 
+async function requestGetJson(url) {
+    if (window.ApiClient?.getJson) {
+        return window.ApiClient.getJson(url);
+    }
+
+    const response = await fetch(url);
+    const data = await response.json();
+    return { response, data };
+}
+
+async function requestPostJson(url, payload) {
+    if (window.ApiClient?.postJson) {
+        return window.ApiClient.postJson(url, payload);
+    }
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {})
+    });
+    const data = await response.json();
+    return { response, data };
+}
+
+async function requestPostNoBody(url) {
+    if (window.ApiClient?.postNoBody) {
+        return window.ApiClient.postNoBody(url);
+    }
+
+    const response = await fetch(url, { method: 'POST' });
+    const data = await response.json();
+    return { response, data };
+}
+
+function openBigBoardPlayerModal(player) {
+    const overlay = document.getElementById('player-report-overlay');
+    const detailsSection = document.getElementById('player-details');
+    overlay.classList.remove('hidden');
+    detailsSection.classList.add('modal-mode');
+
+    currentPlayer = player;
+    currentPlayerSourceTab = 'bigboard-modal';
+    displayPlayerDetails(player);
+}
+
+function initializeBigBoardController() {
+    if (!window.createBigBoardController) {
+        return;
+    }
+
+    bigBoardController = window.createBigBoardController({
+        getBigBoardType: () => bigBoardType,
+        setBigBoardTypeState: (type) => {
+            bigBoardType = type;
+        },
+        getCurrentBigBoardPosition: () => currentBigBoardPosition,
+        setCurrentBigBoardPosition: (position) => {
+            currentBigBoardPosition = position || null;
+        },
+        getAppSettings: () => appSettings,
+        requestGetJson,
+        requestPostJson,
+        showToast,
+        openBigBoardPlayerModal
+    });
+}
+
+function initializePlayerReportController() {
+    if (!window.createPlayerReportController) {
+        return;
+    }
+
+    playerReportController = window.createPlayerReportController({
+        getCurrentPlayer: () => currentPlayer,
+        setCurrentPlayer: (player) => {
+            currentPlayer = player;
+        },
+        requestGetJson,
+        requestPostJson,
+        requestPostNoBody,
+        showToast,
+        loadStats,
+        loadPositions,
+        loadSchools,
+        displayPlayerDetails
+    });
+}
+
 // Initialize the app
 document.addEventListener('DOMContentLoaded', function() {
     loadAppSettings();
@@ -87,6 +170,8 @@ document.addEventListener('DOMContentLoaded', function() {
     loadPositions();
     loadSchools();
     loadRankBoardSettings();
+    initializeBigBoardController();
+    initializePlayerReportController();
     setupEventListeners();
 
     const savedTabId = getSavedActiveTabId();
@@ -173,8 +258,8 @@ function positionPlayerDetailsForCurrentSource() {
 // Load statistics
 async function loadStats() {
     try {
-        const response = await fetch('/api/stats');
-        const stats = await response.json();
+        const { data } = await requestGetJson('/api/stats');
+        const stats = data;
      
         document.getElementById('total-players').textContent = stats.total_players;
         document.getElementById('scouted-players').textContent = stats.scouted;
@@ -187,8 +272,8 @@ async function loadStats() {
 // Load available positions
 async function loadPositions() {
     try {
-        const response = await fetch('/api/positions');
-        const positions = await response.json();
+        const { data } = await requestGetJson('/api/positions');
+        const positions = data;
 
         const randomizerContainer = document.getElementById('position-filters');
         const searchContainer = document.getElementById('search-position-filters');
@@ -270,8 +355,8 @@ async function loadPositions() {
 // Load available schools for searchable dropdown
 async function loadSchools() {
     try {
-        const response = await fetch('/api/schools');
-        const schools = await response.json();
+        const { data } = await requestGetJson('/api/schools');
+        const schools = data;
 
         const schoolSelect = document.getElementById('school-search-input');
         schoolSelect.innerHTML = '<option value="">All schools</option>';
@@ -289,6 +374,11 @@ async function loadSchools() {
 
 // Setup event listeners
 function setupEventListeners() {
+    const stopAppBtn = document.getElementById('stop-app-btn');
+    if (stopAppBtn) {
+        stopAppBtn.addEventListener('click', shutdownApplication);
+    }
+
     // Randomize button
     document.getElementById('randomize-btn').addEventListener('click', randomizePlayer);
  
@@ -307,10 +397,10 @@ function setupEventListeners() {
     // Save notes button
     document.getElementById('save-notes-btn').addEventListener('click', saveNotes);
     document.getElementById('save-games-watched-btn').addEventListener('click', saveGamesWatched);
-    document.getElementById('close-player-report-btn').addEventListener('click', closeBigBoardPlayerReportModal);
+    document.getElementById('close-player-report-btn').addEventListener('click', closePlayerReport);
     document.getElementById('player-report-overlay').addEventListener('click', function(event) {
         if (event.target === this) {
-            closeBigBoardPlayerReportModal();
+            closePlayerReport();
         }
     });
     document.addEventListener('keydown', function(event) {
@@ -335,7 +425,7 @@ function setupEventListeners() {
         const overlay = document.getElementById('player-report-overlay');
         if (overlay && !overlay.classList.contains('hidden')) {
             event.preventDefault();
-            closeBigBoardPlayerReportModal();
+            closePlayerReport();
         }
     });
  
@@ -393,6 +483,7 @@ function setupEventListeners() {
     document.getElementById('toggle-add-player-btn').addEventListener('click', toggleAddPlayerPanel);
     document.getElementById('refresh-logos-btn').addEventListener('click', refreshDownloadedLogos);
     document.getElementById('update-rankings-btn').addEventListener('click', updateRankingsFromTankathon);
+    document.getElementById('recalculate-rankings-btn').addEventListener('click', recalculatePlayerRankings);
     document.getElementById('import-consensus-btn').addEventListener('click', importConsensusBoard);
     document.getElementById('import-nflmock-url-btn').addEventListener('click', openImportNflmockUrlDialog);
     document.getElementById('merge-duplicates-btn').addEventListener('click', mergeDuplicatePlayers);
@@ -460,31 +551,43 @@ function resetPreferences() {
 }
 
 function showToast(title, message = '', type = 'success', durationMs = 5000) {
-    const container = document.getElementById('toast-container');
-    if (!container) {
+    if (window.UIFeedback?.toast) {
+        window.UIFeedback.toast(title, message, type, durationMs);
+    }
+}
+
+async function shutdownApplication() {
+    const userConfirmed = window.UIFeedback?.confirmAction
+        ? await window.UIFeedback.confirmAction({
+            title: 'Stop Scouting App?',
+            message: 'This will stop the local server process and close this session.',
+            confirmText: 'Stop App',
+            cancelText: 'Cancel'
+        })
+        : window.confirm('Stop Scouting App? This will stop the local server process and close this session.');
+
+    if (!userConfirmed) {
         return;
     }
 
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-
-    const titleEl = document.createElement('div');
-    titleEl.className = 'toast-title';
-    titleEl.textContent = title;
-    toast.appendChild(titleEl);
-
-    if (message) {
-        const messageEl = document.createElement('div');
-        messageEl.className = 'toast-message';
-        messageEl.textContent = message;
-        toast.appendChild(messageEl);
+    const stopAppBtn = document.getElementById('stop-app-btn');
+    if (stopAppBtn) {
+        stopAppBtn.disabled = true;
     }
 
-    container.appendChild(toast);
+    try {
+        await fetch('/api/system/shutdown', { method: 'POST' });
+        showToast('Stopping App', 'Server is shutting down. This window can now be closed.', 'success', 6000);
+    } catch (error) {
+        console.error('Error shutting down app:', error);
+    }
 
     setTimeout(() => {
-        toast.remove();
-    }, durationMs);
+        window.close();
+        if (!window.closed) {
+            window.location.href = 'about:blank';
+        }
+    }, 500);
 }
 
 async function runSettingsTool(endpoint, buttonId, successMessage) {
@@ -496,8 +599,8 @@ async function runSettingsTool(endpoint, buttonId, successMessage) {
     messageEl.textContent = 'Running... this may take a minute.';
 
     try {
-        const response = await fetch(endpoint, { method: 'POST' });
-        const result = await response.json();
+        const { response, data } = await requestPostNoBody(endpoint);
+        const result = data || {};
 
         if (!response.ok || !result.success) {
             const errorLog = result.output || result.error || 'Failed to run tool.';
@@ -534,7 +637,12 @@ async function refreshDownloadedLogos() {
 }
 
 async function updateRankingsFromTankathon() {
-    await runSettingsTool('/api/settings/update-rankings', 'update-rankings-btn', 'Rankings updated from Tankathon.');
+    await runSettingsTool('/api/settings/update-rankings', 'update-rankings-btn', 'Tankathon data fetched and imported.');
+    loadRankBoardSettings();
+}
+
+async function recalculatePlayerRankings() {
+    await runSettingsTool('/api/settings/recalculate-player-rankings', 'recalculate-rankings-btn', 'Player rankings recalculated.');
     loadRankBoardSettings();
 }
 
@@ -589,15 +697,11 @@ async function importNflmockBoardByUrl() {
     message.textContent = 'Importing board from URL...';
 
     try {
-        const response = await fetch('/api/settings/import-nflmock-board-url', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                url,
-                board_name: customBoardName || null
-            })
+        const { response, data } = await requestPostJson('/api/settings/import-nflmock-board-url', {
+            url,
+            board_name: customBoardName || null
         });
-        const result = await response.json();
+        const result = data || {};
 
         if (!response.ok || !result.success) {
             const errorText = result.error || 'Could not import board from URL.';
@@ -640,8 +744,8 @@ async function loadRankBoardSettings() {
     }
 
     try {
-        const response = await fetch('/api/settings/rank-boards');
-        const payload = await response.json();
+        const { response, data } = await requestGetJson('/api/settings/rank-boards');
+        const payload = data || {};
         if (!response.ok || !payload.success) {
             container.innerHTML = '<p class="search-empty">Unable to load board weight settings.</p>';
             return;
@@ -823,12 +927,8 @@ async function saveRankBoardSettings() {
 
     button.disabled = true;
     try {
-        const response = await fetch('/api/settings/rank-boards', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ boards: updates })
-        });
-        const result = await response.json();
+        const { response, data } = await requestPostJson('/api/settings/rank-boards', { boards: updates });
+        const result = data || {};
 
         if (!response.ok || !result.success) {
             const errorText = result.error || 'Could not save board settings.';
@@ -959,16 +1059,12 @@ async function importAndNormalizeBigBoards() {
             });
         }
 
-        const response = await fetch('/api/settings/import-big-boards', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                weighting_mode: useWeights ? 'weighted' : 'equal',
-                boards: boardsPayload
-            })
+        const { response, data } = await requestPostJson('/api/settings/import-big-boards', {
+            weighting_mode: useWeights ? 'weighted' : 'equal',
+            boards: boardsPayload
         });
 
-        const result = await response.json();
+        const result = data || {};
         if (!response.ok || !result.success) {
             const errorText = result.error || 'Failed to import boards.';
             messageEl.textContent = errorText;
@@ -1419,35 +1515,19 @@ function populateGradeDropdowns(playerGrade = null) {
 }
 
 function setBigBoardType(type) {
-    bigBoardType = type;
-
-    const overallBtn = document.getElementById('overall-board-btn');
-    const positionBtn = document.getElementById('position-board-btn');
-    const positionSelector = document.getElementById('position-board-selector');
-
-    overallBtn.classList.toggle('active', type === 'overall');
-    positionBtn.classList.toggle('active', type === 'position');
-    positionSelector.classList.toggle('hidden', type !== 'position');
-
-    const positionSelect = document.getElementById('bigboard-position-select');
-    if (type === 'position') {
-        currentBigBoardPosition = positionSelect.value || currentBigBoardPosition;
-    } else {
-        currentBigBoardPosition = null;
+    if (!bigBoardController) {
+        return;
     }
-
-    loadBigBoard();
-    searchBigBoardPlayers();
+    bigBoardController.setBigBoardType(type);
 }
 
 function getBigBoardParams() {
-    if (bigBoardType === 'position') {
-        return {
-            type: 'position',
-            position: currentBigBoardPosition
-        };
+    if (bigBoardController) {
+        return bigBoardController.getBigBoardParams();
     }
-    return { type: 'overall' };
+    return bigBoardType === 'position'
+        ? { type: 'position', position: currentBigBoardPosition }
+        : { type: 'overall' };
 }
 
 function hasAnyGrade(player) {
@@ -1498,578 +1578,84 @@ function comparePlayersForBigBoardAdd(a, b) {
 }
 
 async function loadBigBoard() {
-    try {
-        const params = new URLSearchParams();
-        params.append('type', bigBoardType);
-        if (bigBoardType === 'position' && currentBigBoardPosition) {
-            params.append('position', currentBigBoardPosition);
-        }
-
-        const response = await fetch(`/api/bigboard?${params.toString()}`);
-        const entries = await response.json();
-        renderBigBoard(entries);
-    } catch (error) {
-        console.error('Error loading big board:', error);
-        document.getElementById('bigboard-list').innerHTML = '<p class="search-empty">Error loading big board.</p>';
+    if (!bigBoardController) {
+        return;
     }
+    await bigBoardController.loadBigBoard();
 }
 
 function renderBigBoard(entries) {
-    const title = document.getElementById('bigboard-title');
-    const list = document.getElementById('bigboard-list');
-    title.textContent = bigBoardType === 'position' && currentBigBoardPosition
-        ? `${currentBigBoardPosition} Big Board`
-        : 'Overall Big Board';
-
-    list.innerHTML = '';
-    currentBigBoardPlayerIds = new Set(
-        (Array.isArray(entries) ? entries : []).map(entry => Number(entry.id))
-    );
-
-    list.ondragover = handleBoardListDragOver;
-    list.ondrop = handleBoardListDrop;
-
-    if (!Array.isArray(entries) || entries.length === 0) {
-        list.innerHTML = '<p class="search-empty">No players on this board yet. Add players from the left panel.</p>';
-        return;
-    }
-
-    entries.forEach((entry, index) => {
-        const item = document.createElement('div');
-        item.className = 'bigboard-item';
-        item.draggable = true;
-        item.dataset.playerId = entry.id;
-
-        item.addEventListener('dragstart', handleBoardDragStart);
-        item.addEventListener('dragover', handleBoardDragOver);
-        item.addEventListener('dragend', handleBoardDragEnd);
-        item.addEventListener('click', function(event) {
-            if (event.target.closest('button')) {
-                return;
-            }
-            openBigBoardPlayerReport(entry.id);
-        });
-
-        const main = document.createElement('div');
-        main.className = 'bigboard-item-main';
-
-        const rank = document.createElement('div');
-        rank.className = 'bigboard-rank';
-        rank.textContent = `#${index + 1}`;
-
-        const name = document.createElement('div');
-        name.className = 'bigboard-name';
-        name.textContent = entry.name;
-
-        const meta = document.createElement('div');
-        meta.className = 'bigboard-meta';
-        const metaParts = [entry.position || 'N/A', entry.school || 'Unknown'];
-        if (appSettings.showConsensusGradeOnBigBoard) {
-            const consensusRank = Number(entry.consensus_rank);
-            if (Number.isFinite(consensusRank) && consensusRank > 0) {
-                metaParts.push(`Consensus Grade #${Math.round(consensusRank)}`);
-            } else {
-                metaParts.push('Consensus Grade N/A');
-            }
-        }
-        if (entry.grade) {
-            metaParts.push(entry.grade);
-        }
-        meta.textContent = metaParts.join(' • ');
-
-        main.appendChild(rank);
-        main.appendChild(name);
-        main.appendChild(meta);
-
-        const actions = document.createElement('div');
-        const removeBtn = document.createElement('button');
-        removeBtn.className = 'mini-btn remove';
-        removeBtn.textContent = 'Remove';
-        removeBtn.addEventListener('click', (event) => {
-            event.stopPropagation();
-            removePlayerFromBigBoard(entry.id);
-        });
-        actions.appendChild(removeBtn);
-
-        item.appendChild(main);
-        item.appendChild(actions);
-        list.appendChild(item);
-    });
+    return entries;
 }
 
 async function openBigBoardPlayerReport(playerId) {
-    try {
-        const response = await fetch(`/api/player/${playerId}`);
-        const player = await response.json();
-
-        if (!response.ok || player.error) {
-            alert(player.error || 'Unable to load scout report.');
-            return;
-        }
-
-        const overlay = document.getElementById('player-report-overlay');
-        const detailsSection = document.getElementById('player-details');
-        overlay.classList.remove('hidden');
-        detailsSection.classList.add('modal-mode');
-
-        currentPlayer = player;
-        currentPlayerSourceTab = 'bigboard-modal';
-        displayPlayerDetails(player);
-    } catch (error) {
-        console.error('Error loading big board player report:', error);
-        alert('Error loading scout report. Please try again.');
+    if (!bigBoardController) {
+        return;
     }
+    await bigBoardController.openBigBoardPlayerReport(playerId);
 }
 
 function closeBigBoardPlayerReportModal() {
+    closePlayerReport();
+}
+
+function closePlayerReport() {
     const overlay = document.getElementById('player-report-overlay');
     const detailsSection = document.getElementById('player-details');
 
     overlay.classList.add('hidden');
     detailsSection.classList.remove('modal-mode');
 
-    if (currentPlayerSourceTab === 'bigboard-modal') {
-        currentPlayerSourceTab = null;
-        updatePlayerDetailsVisibility();
-    }
-}
+    currentPlayer = null;
+    currentPlayerSourceTab = null;
+    updatePlayerDetailsVisibility();
 
-function handleBoardDragStart(event) {
-    draggedSource = 'board';
-    draggedBoardPlayerId = event.currentTarget.dataset.playerId;
-    event.currentTarget.classList.add('dragging');
-    event.dataTransfer.effectAllowed = 'move';
-}
-
-function handleBoardDragOver(event) {
-    event.preventDefault();
-    if (draggedSource !== 'board' && draggedSource !== 'add') {
-        return;
-    }
-    positionDropPlaceholderByPointer(event.clientY);
-}
-
-function ensureBoardDropPlaceholder() {
-    if (!boardDropPlaceholder) {
-        boardDropPlaceholder = document.createElement('div');
-        boardDropPlaceholder.className = 'bigboard-drop-placeholder';
-        const label = document.createElement('span');
-        label.className = 'bigboard-drop-label';
-        boardDropPlaceholder.appendChild(label);
-    }
-    return boardDropPlaceholder;
-}
-
-function updateDropPlaceholderRankLabel() {
-    if (!boardDropPlaceholder || !boardDropPlaceholder.parentElement) {
-        return;
-    }
-
-    const list = boardDropPlaceholder.parentElement;
-    const siblings = Array.from(list.children);
-    const placeholderIndex = siblings.indexOf(boardDropPlaceholder);
-    if (placeholderIndex < 0) {
-        return;
-    }
-
-    const rank = siblings
-        .slice(0, placeholderIndex)
-        .filter(el => el.classList.contains('bigboard-item') && !el.classList.contains('dragging'))
-        .length + 1;
-
-    const label = boardDropPlaceholder.querySelector('.bigboard-drop-label');
-    if (label) {
-        label.textContent = `Drop at #${rank}`;
-    }
-}
-
-function placeDropPlaceholderAtIndex(index) {
-    const list = document.getElementById('bigboard-list');
-    const placeholder = ensureBoardDropPlaceholder();
-    const items = Array.from(list.querySelectorAll('.bigboard-item:not(.dragging)'));
-    const clampedIndex = Math.max(0, Math.min(index, items.length));
-
-    if (clampedIndex >= items.length) {
-        list.appendChild(placeholder);
-    } else {
-        list.insertBefore(placeholder, items[clampedIndex]);
-    }
-
-    list.classList.add('drag-active');
-    lastDropIndex = clampedIndex;
-    updateDropPlaceholderRankLabel();
-}
-
-function positionDropPlaceholderByPointer(clientY) {
-    const list = document.getElementById('bigboard-list');
-    const items = Array.from(list.querySelectorAll('.bigboard-item:not(.dragging)'));
-
-    if (!items.length) {
-        placeDropPlaceholderAtIndex(0);
-        return;
-    }
-
-    const slotPadding = 18;
-    const deadZone = 12;
-    let targetIndex = items.length;
-
-    for (let index = 0; index < items.length; index += 1) {
-        const rect = items[index].getBoundingClientRect();
-        const slotTop = rect.top - slotPadding;
-        const slotBottom = rect.bottom + slotPadding;
-        const midPoint = rect.top + rect.height / 2;
-
-        if (clientY < slotTop) {
-            targetIndex = index;
-            break;
-        }
-
-        if (clientY >= slotTop && clientY <= slotBottom) {
-            if (clientY < midPoint - deadZone) {
-                targetIndex = index;
-            } else if (clientY > midPoint + deadZone) {
-                targetIndex = index + 1;
-            } else {
-                targetIndex = lastDropIndex !== null ? lastDropIndex : index + 1;
-            }
-            break;
-        }
-    }
-
-    placeDropPlaceholderAtIndex(targetIndex);
-}
-
-function handleBoardListDragOver(event) {
-    event.preventDefault();
-    if (draggedSource !== 'board' && draggedSource !== 'add') {
-        return;
-    }
-
-    positionDropPlaceholderByPointer(event.clientY);
-}
-
-async function handleBoardListDrop(event) {
-    event.preventDefault();
-    const list = document.getElementById('bigboard-list');
-
-    if (draggedSource === 'add' && draggedAddPlayerId) {
-        await addPlayerToBigBoard(Number(draggedAddPlayerId));
-        clearBoardDragArtifacts();
-        return;
-    }
-
-    if (draggedSource !== 'board' || !draggedBoardPlayerId) {
-        clearBoardDragArtifacts();
-        return;
-    }
-
-    const draggedEl = list.querySelector(`[data-player-id="${draggedBoardPlayerId}"]`);
-
-    if (!draggedEl) {
-        clearBoardDragArtifacts();
-        return;
-    }
-
-    if (boardDropPlaceholder && boardDropPlaceholder.parentElement === list) {
-        list.insertBefore(draggedEl, boardDropPlaceholder);
-    } else {
-        list.appendChild(draggedEl);
-    }
-
-    await persistBigBoardOrder();
-    refreshBigBoardVisibleRanks();
-    clearBoardDragArtifacts();
-}
-
-function clearBoardDragArtifacts() {
-    const list = document.getElementById('bigboard-list');
-    if (list) {
-        list.classList.remove('drag-active');
-    }
-    if (boardDropPlaceholder && boardDropPlaceholder.parentElement) {
-        boardDropPlaceholder.remove();
-    }
-    draggedBoardPlayerId = null;
-    draggedAddPlayerId = null;
-    draggedSource = null;
-    lastDropIndex = null;
-}
-
-function handleBoardDragEnd(event) {
-    event.currentTarget.classList.remove('dragging');
-    clearBoardDragArtifacts();
-}
-
-function refreshBigBoardVisibleRanks() {
-    const items = document.querySelectorAll('#bigboard-list .bigboard-item');
-    items.forEach((item, index) => {
-        const rankEl = item.querySelector('.bigboard-rank');
-        if (rankEl) {
-            rankEl.textContent = `#${index + 1}`;
-        }
-    });
-}
-
-async function persistBigBoardOrder() {
-    const playerIds = Array.from(document.querySelectorAll('#bigboard-list .bigboard-item'))
-        .map(item => parseInt(item.dataset.playerId, 10));
-
-    const payload = {
-        ...getBigBoardParams(),
-        player_ids: playerIds
-    };
-
-    try {
-        await fetch('/api/bigboard/reorder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-    } catch (error) {
-        console.error('Error persisting big board order:', error);
+    const activeTab = document.querySelector('.tab-panel.active')?.id;
+    if (activeTab === 'search-tab') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 }
 
 async function searchBigBoardPlayers() {
-    const searchTerm = document.getElementById('bigboard-player-search').value.trim();
-    const resultsContainer = document.getElementById('bigboard-player-results');
-
-    try {
-        const params = new URLSearchParams();
-        params.append('include_scouted', 'true');
-        if (searchTerm) {
-            params.append('name', searchTerm);
-        }
-        if (bigBoardType === 'position' && currentBigBoardPosition) {
-            params.append('positions[]', currentBigBoardPosition);
-        }
-
-        const response = await fetch(`/api/players?${params.toString()}`);
-        const players = await response.json();
-
-        resultsContainer.innerHTML = '';
-        const availablePlayers = Array.isArray(players)
-            ? players.filter(player => !currentBigBoardPlayerIds.has(Number(player.id)))
-            : [];
-
-        availablePlayers.sort(comparePlayersForBigBoardAdd);
-
-        if (availablePlayers.length === 0) {
-            resultsContainer.innerHTML = '<p class="search-empty">No matching players found.</p>';
-            return;
-        }
-
-        availablePlayers.slice(0, 100).forEach(player => {
-            const card = document.createElement('div');
-            card.className = 'search-result-card bigboard-add-card';
-            card.draggable = true;
-            card.dataset.playerId = String(player.id);
-            card.addEventListener('dragstart', handleAddCardDragStart);
-            card.addEventListener('dragend', handleAddCardDragEnd);
-
-            const name = document.createElement('div');
-            name.className = 'search-result-name';
-            name.textContent = player.name;
-
-            const meta = document.createElement('div');
-            meta.className = 'search-result-meta';
-            const metaParts = [player.position || 'N/A', player.school || 'Unknown'];
-            if (player.grade) {
-                metaParts.push(player.grade);
-            }
-            meta.textContent = metaParts.join(' • ');
-
-            const scoutStatus = document.createElement('div');
-            scoutStatus.className = `bigboard-scout-status ${player.scouted ? 'scouted' : 'not-scouted'}`;
-            scoutStatus.textContent = player.scouted ? 'Scouted' : 'Not Scouted';
-
-            const addBtn = document.createElement('button');
-            addBtn.className = 'mini-btn bigboard-add-btn';
-            addBtn.textContent = 'Add to Board';
-            addBtn.addEventListener('click', async (event) => {
-                event.stopPropagation();
-                openAddToBoardDialog(player);
-            });
-
-            const actionsWrap = document.createElement('div');
-            actionsWrap.className = 'bigboard-add-actions';
-            actionsWrap.appendChild(scoutStatus);
-            actionsWrap.appendChild(addBtn);
-
-            card.appendChild(name);
-            card.appendChild(meta);
-            card.appendChild(actionsWrap);
-            resultsContainer.appendChild(card);
-        });
-    } catch (error) {
-        console.error('Error loading players for big board:', error);
-        resultsContainer.innerHTML = '<p class="search-empty">Error loading players.</p>';
+    if (!bigBoardController) {
+        return;
     }
-}
-
-function handleAddCardDragStart(event) {
-    draggedSource = 'add';
-    draggedAddPlayerId = event.currentTarget.dataset.playerId;
-    event.currentTarget.classList.add('dragging');
-    event.dataTransfer.effectAllowed = 'copyMove';
-}
-
-function handleAddCardDragEnd(event) {
-    event.currentTarget.classList.remove('dragging');
-    clearBoardDragArtifacts();
-}
-
-function openAddToBoardDialog(player) {
-    pendingAddToBoardPlayer = player;
-    const modal = document.getElementById('add-to-board-dialog');
-    const title = document.getElementById('add-to-board-title');
-    const input = document.getElementById('add-to-board-rank-input');
-    const boardCount = document.querySelectorAll('#bigboard-list .bigboard-item').length;
-    const maxRank = boardCount + 1;
-
-    title.textContent = `Add ${player.name} to Big Board`;
-    input.value = String(maxRank);
-    input.min = '1';
-    input.max = String(maxRank);
-    input.placeholder = `1-${maxRank}`;
-    modal.classList.remove('hidden');
-    input.focus();
-}
-
-function closeAddToBoardDialog() {
-    pendingAddToBoardPlayer = null;
-    const modal = document.getElementById('add-to-board-dialog');
-    modal.classList.add('hidden');
+    await bigBoardController.searchBigBoardPlayers();
 }
 
 async function confirmAddToRank() {
-    if (!pendingAddToBoardPlayer) {
+    if (!bigBoardController) {
         return;
     }
-
-    const input = document.getElementById('add-to-board-rank-input');
-    const boardCount = document.querySelectorAll('#bigboard-list .bigboard-item').length;
-    const maxRank = boardCount + 1;
-    const parsedRank = parseInt(input.value, 10);
-    if (!Number.isInteger(parsedRank) || parsedRank < 1) {
-        showToast('Invalid Position', 'Enter a valid board position (1 or greater).', 'error', 5000);
-        return;
-    }
-
-    const targetRank = Math.min(parsedRank, maxRank);
-
-    const playerId = pendingAddToBoardPlayer.id;
-    closeAddToBoardDialog();
-    await addPlayerToBigBoard(playerId, { placement: 'rank', targetRank });
+    await bigBoardController.confirmAddToRank();
 }
 
 async function confirmAddToBottom() {
-    if (!pendingAddToBoardPlayer) {
+    if (!bigBoardController) {
         return;
     }
-
-    const playerId = pendingAddToBoardPlayer.id;
-    closeAddToBoardDialog();
-    await addPlayerToBigBoard(playerId, { placement: 'bottom' });
-}
-
-async function addPlayerToBigBoard(playerId, options = {}) {
-    try {
-        const response = await fetch('/api/bigboard/add', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                ...getBigBoardParams(),
-                player_id: playerId
-            })
-        });
-        const result = await response.json();
-
-        if (!response.ok || !result.success) {
-            alert(result.error || 'Could not add player to board.');
-            return;
-        }
-
-        await loadBigBoard();
-        if (options.placement === 'rank' && Number.isInteger(options.targetRank)) {
-            await movePlayerWithinBoard(Number(playerId), options.targetRank);
-        } else if (options.placement === 'bottom') {
-            await movePlayerWithinBoard(Number(playerId), Number.MAX_SAFE_INTEGER);
-        }
-        await searchBigBoardPlayers();
-    } catch (error) {
-        console.error('Error adding player to big board:', error);
-        alert('Error adding player to big board.');
-    }
-}
-
-async function movePlayerWithinBoard(playerId, targetRank) {
-    const list = document.getElementById('bigboard-list');
-    const ids = Array.from(list.querySelectorAll('.bigboard-item'))
-        .map(item => Number(item.dataset.playerId));
-
-    if (!ids.includes(playerId)) {
-        return;
-    }
-
-    const withoutPlayer = ids.filter(id => id !== playerId);
-    const insertIndex = Math.max(0, Math.min(targetRank - 1, withoutPlayer.length));
-    withoutPlayer.splice(insertIndex, 0, playerId);
-
-    await fetch('/api/bigboard/reorder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            ...getBigBoardParams(),
-            player_ids: withoutPlayer
-        })
-    });
-
-    await loadBigBoard();
+    await bigBoardController.confirmAddToBottom();
 }
 
 async function autoSortBigBoard() {
-    const confirmed = window.confirm('Auto-sort will reorder this board by current grades. Continue?');
-    if (!confirmed) {
+    if (!bigBoardController) {
         return;
     }
-
-    try {
-        const response = await fetch('/api/bigboard/autosort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(getBigBoardParams())
-        });
-        const result = await response.json();
-
-        if (!response.ok || !result.success) {
-            alert(result.error || 'Could not auto-sort big board.');
-            return;
-        }
-
-        await loadBigBoard();
-        await searchBigBoardPlayers();
-    } catch (error) {
-        console.error('Error auto-sorting big board:', error);
-        alert('Error auto-sorting big board.');
-    }
+    await bigBoardController.autoSortBigBoard();
 }
 
 async function removePlayerFromBigBoard(playerId) {
-    try {
-        await fetch('/api/bigboard/remove', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                ...getBigBoardParams(),
-                player_id: playerId
-            })
-        });
-        await loadBigBoard();
-        await searchBigBoardPlayers();
-    } catch (error) {
-        console.error('Error removing player from big board:', error);
+    if (!bigBoardController) {
+        return;
     }
+    await bigBoardController.removePlayerFromBigBoard(playerId);
+}
+
+function closeAddToBoardDialog() {
+    if (!bigBoardController) {
+        return;
+    }
+    bigBoardController.closeAddToBoardDialog();
 }
 
 async function addPlayerFromSettings() {
@@ -2100,12 +1686,8 @@ async function addPlayerFromSettings() {
     messageEl.classList.add('hidden');
 
     try {
-        const response = await fetch('/api/settings/player', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        const result = await response.json();
+        const { response, data } = await requestPostJson('/api/settings/player', payload);
+        const result = data || {};
 
         if (!response.ok || !result.success) {
             messageEl.textContent = result.error || 'Could not add player.';
@@ -2209,8 +1791,8 @@ async function searchPlayers() {
         }
         params.append('include_scouted', includeScouted ? 'true' : 'false');
 
-        const response = await fetch(`/api/players?${params.toString()}`);
-        const players = await response.json();
+        const { data } = await requestGetJson(`/api/players?${params.toString()}`);
+        const players = data;
 
         renderSearchResults(players);
 
@@ -2261,11 +1843,11 @@ function renderSearchResults(players) {
 
 async function loadPlayerReport(playerId) {
     try {
-        const response = await fetch(`/api/player/${playerId}`);
-        const player = await response.json();
+        const { response, data } = await requestGetJson(`/api/player/${playerId}`);
+        const player = data || {};
 
         if (!response.ok || player.error) {
-            alert(player.error || 'Unable to load scout report.');
+            showToast('Load Failed', player.error || 'Unable to load scout report.', 'error', 6000);
             return;
         }
 
@@ -2274,7 +1856,7 @@ async function loadPlayerReport(playerId) {
         displayPlayerDetails(player);
     } catch (error) {
         console.error('Error loading player report:', error);
-        alert('Error loading scout report. Please try again.');
+        showToast('Load Failed', 'Error loading scout report. Please try again.', 'error', 6000);
     }
 }
 
@@ -2292,21 +1874,21 @@ async function randomizePlayer() {
         }
      
         // Fetch eligible players
-        const playersResponse = await fetch(`/api/players?${params.toString()}`);
-        allPlayers = await playersResponse.json();
+        const playersResponse = await requestGetJson(`/api/players?${params.toString()}`);
+        allPlayers = playersResponse.data || [];
      
         if (allPlayers.length === 0) {
-            alert('No players available with current filters!');
+            showToast('No Players Found', 'No players available with current filters.', 'error', 5000);
             randomizeBtn.disabled = false;
             return;
         }
      
         // Get random player
-        const response = await fetch(`/api/random?${params.toString()}`);
-        const player = await response.json();
+        const { data } = await requestGetJson(`/api/random?${params.toString()}`);
+        const player = data || {};
      
         if (player.error) {
-            alert(player.error);
+            showToast('Randomize Failed', player.error, 'error', 5000);
             randomizeBtn.disabled = false;
             return;
         }
@@ -2325,7 +1907,7 @@ async function randomizePlayer() {
      
     } catch (error) {
         console.error('Error randomizing player:', error);
-        alert('Error selecting player. Please try again.');
+        showToast('Randomize Failed', 'Error selecting player. Please try again.', 'error', 6000);
     } finally {
         randomizeBtn.disabled = false;
     }
@@ -2608,7 +2190,9 @@ function renderPlayerBoardRanks(player) {
     }
 
     if (player.weighted_average_rank) {
-        appendRankPill(overallRow, 'Weighted Avg', Number(player.weighted_average_rank).toFixed(1));
+        const useCustomWeights = document.getElementById('use-board-weights-checkbox')?.checked;
+        const averageRankLabel = useCustomWeights ? 'Weighted Avg' : 'Average Rank';
+        appendRankPill(overallRow, averageRankLabel, Number(player.weighted_average_rank).toFixed(1));
     }
 
     boardRanks.forEach(board => {
@@ -2642,270 +2226,80 @@ function renderPlayerBoardRanks(player) {
 
 // Toggle scout status
 async function toggleScoutStatus() {
-    if (!currentPlayer) return;
- 
-    try {
-        const endpoint = currentPlayer.scouted ? 'unscout' : 'scout';
-        const response = await fetch(`/api/player/${currentPlayer.id}/${endpoint}`, {
-            method: 'POST'
-        });
-     
-        if (response.ok) {
-            currentPlayer.scouted = !currentPlayer.scouted;
-         
-            const scoutBtn = document.getElementById('mark-scouted-btn');
-            if (currentPlayer.scouted) {
-                scoutBtn.innerHTML = '<span>↺</span> Unmark as Scouted';
-                scoutBtn.classList.add('scouted');
-            } else {
-                scoutBtn.innerHTML = '<span>✓</span> Mark as Scouted';
-                scoutBtn.classList.remove('scouted');
-            }
-         
-            loadStats();
-        }
-    } catch (error) {
-        console.error('Error updating scout status:', error);
-        alert('Error updating scout status. Please try again.');
+    if (!playerReportController) {
+        return;
     }
+    await playerReportController.toggleScoutStatus();
 }
 
 async function savePlayerProfile() {
-    if (!currentPlayer) return;
-
-    const statsObject = collectProfileStatsObject();
-
-    const payload = {
-        position: document.getElementById('edit-position-input').value.trim(),
-        school: document.getElementById('edit-school-input').value.trim(),
-        height: document.getElementById('edit-height-input').value.trim(),
-        weight: document.getElementById('edit-weight-input').value.trim(),
-        jersey_number: document.getElementById('edit-jersey-input').value.trim(),
-        player_url: document.getElementById('edit-url-input').value.trim(),
-        stats_json: JSON.stringify(statsObject)
-    };
-
-    const btn = document.getElementById('save-profile-btn');
-    const originalText = btn.textContent;
-    btn.disabled = true;
-
-    try {
-        const response = await fetch(`/api/player/${currentPlayer.id}/profile`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-            const errorText = result.error || 'Could not save profile info.';
-            showToast('Save Failed', errorText, 'error', 7000);
-            return;
-        }
-
-        await loadCurrentPlayerBySource(currentPlayer.id);
-    closeEditProfileDialog();
-        showToast('Profile Saved', 'Player profile fields were updated.', 'success', 5000);
-        loadPositions();
-        loadSchools();
-    } catch (error) {
-        console.error('Error saving profile info:', error);
-        showToast('Save Failed', 'Error saving profile info.', 'error', 7000);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = originalText;
+    if (!playerReportController) {
+        return;
     }
+    await playerReportController.savePlayerProfile();
 }
 
 async function loadCurrentPlayerBySource(playerId) {
-    const response = await fetch(`/api/player/${playerId}`);
-    const player = await response.json();
-
-    if (!response.ok || player.error) {
+    if (!playerReportController) {
         return;
     }
-
-    currentPlayer = player;
-    displayPlayerDetails(player);
+    await playerReportController.loadCurrentPlayerBySource(playerId);
 }
 
 function openEditProfileDialog() {
-    if (!currentPlayer) {
-        showToast('No Player Selected', 'Load a player report first, then edit profile details.', 'error', 5000);
+    if (!playerReportController) {
         return;
     }
-
-    document.getElementById('edit-position-input').value = currentPlayer.position || '';
-    document.getElementById('edit-school-input').value = currentPlayer.school || '';
-    document.getElementById('edit-height-input').value = currentPlayer.height || '';
-    document.getElementById('edit-weight-input').value = currentPlayer.weight || '';
-    document.getElementById('edit-jersey-input').value = currentPlayer.jersey_number || '';
-    document.getElementById('edit-url-input').value = currentPlayer.player_url || '';
-
-    renderProfileStatsBuilder(currentPlayer.stats && typeof currentPlayer.stats === 'object' ? currentPlayer.stats : {});
-    document.getElementById('edit-profile-dialog').classList.remove('hidden');
+    playerReportController.openEditProfileDialog();
 }
 
 function closeEditProfileDialog() {
-    document.getElementById('edit-profile-dialog').classList.add('hidden');
+    if (!playerReportController) {
+        return;
+    }
+    playerReportController.closeEditProfileDialog();
 }
 
 function renderProfileStatsBuilder(statsObject) {
-    const container = document.getElementById('edit-stats-builder');
-    if (!container) {
+    if (!playerReportController) {
         return;
     }
-
-    container.innerHTML = '';
-    const entries = Object.entries(statsObject || {});
-
-    if (!entries.length) {
-        addProfileStatRow('', '');
-        return;
-    }
-
-    entries.forEach(([statKey, statValue]) => {
-        addProfileStatRow(statKey, statValue);
-    });
+    playerReportController.renderProfileStatsBuilder(statsObject);
 }
 
 function addProfileStatRow(statKey = '', statValue = '') {
-    const container = document.getElementById('edit-stats-builder');
-    if (!container) {
+    if (!playerReportController) {
         return;
     }
-
-    const row = document.createElement('div');
-    row.className = 'profile-stat-row';
-
-    const keyInput = document.createElement('input');
-    keyInput.type = 'text';
-    keyInput.className = 'search-input profile-stat-key';
-    keyInput.placeholder = 'Stat name (e.g. forty_time)';
-    keyInput.value = statKey || '';
-
-    const valueInput = document.createElement('input');
-    valueInput.type = 'text';
-    valueInput.className = 'search-input profile-stat-value';
-    valueInput.placeholder = 'Stat value (e.g. 4.39)';
-    valueInput.value = statValue == null ? '' : String(statValue);
-
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'mini-btn remove profile-stat-remove';
-    removeBtn.textContent = 'Remove';
-    removeBtn.addEventListener('click', () => {
-        row.remove();
-        if (!container.children.length) {
-            addProfileStatRow('', '');
-        }
-    });
-
-    row.appendChild(keyInput);
-    row.appendChild(valueInput);
-    row.appendChild(removeBtn);
-    container.appendChild(row);
+    playerReportController.addProfileStatRow(statKey, statValue);
 }
 
 function collectProfileStatsObject() {
-    const stats = {};
-    document.querySelectorAll('#edit-stats-builder .profile-stat-row').forEach(row => {
-        const key = row.querySelector('.profile-stat-key')?.value.trim() || '';
-        const value = row.querySelector('.profile-stat-value')?.value.trim() || '';
-        if (key) {
-            stats[key] = value;
-        }
-    });
-    return stats;
+    if (!playerReportController) {
+        return {};
+    }
+    return playerReportController.collectProfileStatsObject();
 }
 
 // Save notes
 async function saveNotes() {
-    if (!currentPlayer) return;
- 
-    const notes = document.getElementById('notes-input').value;
- 
-    try {
-        const response = await fetch(`/api/player/${currentPlayer.id}/notes`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ notes })
-        });
-     
-        if (response.ok) {
-            // Visual feedback
-            const btn = document.getElementById('save-notes-btn');
-            const originalText = btn.textContent;
-            btn.textContent = '✓ Saved!';
-            btn.style.background = 'var(--success-color)';
-         
-            setTimeout(() => {
-                btn.textContent = originalText;
-                btn.style.background = '';
-            }, 2000);
-        }
-    } catch (error) {
-        console.error('Error saving notes:', error);
-        alert('Error saving notes. Please try again.');
+    if (!playerReportController) {
+        return;
     }
+    await playerReportController.saveNotes();
 }
 
 async function saveGamesWatched() {
-    if (!currentPlayer) return;
-
-    const games_watched = document.getElementById('games-watched-input').value;
-
-    try {
-        const response = await fetch(`/api/player/${currentPlayer.id}/games-watched`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ games_watched })
-        });
-
-        if (response.ok) {
-            currentPlayer.games_watched = games_watched;
-            const btn = document.getElementById('save-games-watched-btn');
-            const originalText = btn.textContent;
-            btn.textContent = '✓ Saved!';
-            btn.style.background = 'var(--success-color)';
-
-            setTimeout(() => {
-                btn.textContent = originalText;
-                btn.style.background = '';
-            }, 2000);
-        }
-    } catch (error) {
-        console.error('Error saving games watched:', error);
-        alert('Error saving games watched. Please try again.');
+    if (!playerReportController) {
+        return;
     }
+    await playerReportController.saveGamesWatched();
 }
 
 // Update grade
 async function updateGrade(grade, slot = 'primary') {
-    if (!currentPlayer) return;
- 
-    try {
-        const response = await fetch(`/api/player/${currentPlayer.id}/grade`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ grade, slot })
-        });
-     
-        if (response.ok) {
-            if (slot === 'secondary') {
-                currentPlayer.grade_secondary = grade;
-            } else {
-                currentPlayer.grade = grade;
-            }
-        }
-    } catch (error) {
-        console.error('Error updating grade:', error);
-        alert('Error updating grade. Please try again.');
+    if (!playerReportController) {
+        return;
     }
+    await playerReportController.updateGrade(grade, slot);
 }

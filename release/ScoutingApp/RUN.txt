@@ -1,0 +1,3 @@
+﻿Double-click ScoutingApp.exe to launch the app.
+The app opens at http://127.0.0.1:5000 in your browser.
+Use the top-right "Stop App" button in the UI to shut down the process.
