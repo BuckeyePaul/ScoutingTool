@@ -4,8 +4,7 @@ let selectedPositions = [];
 let selectedRank = null;
 let selectedSearchPositions = [];
 let allPlayers = [];
-let ranksRevealed = false;
-let posRanksRevealed = false;
+let boardRanksRevealed = false;
 let bigBoardType = 'overall';
 let currentBigBoardPosition = null;
 let draggedBoardPlayerId = null;
@@ -16,6 +15,7 @@ let currentBigBoardPlayerIds = new Set();
 let currentPlayerSourceTab = null;
 let lastDropIndex = null;
 let pendingAddToBoardPlayer = null;
+let importedBoardFiles = [];
 const SETTINGS_STORAGE_KEY = 'scout_app_settings';
 const ACTIVE_TAB_STORAGE_KEY = 'scout_active_tab';
 const DEFAULT_APP_SETTINGS = {
@@ -23,7 +23,8 @@ const DEFAULT_APP_SETTINGS = {
     teamCity: 'Arizona',
     font: 'rajdhani',
     gradingSystems: ['round'],
-    showRanksInLists: true
+    showConsensusGradeOnBigBoard: false,
+    hiddenRankBoardKeys: []
 };
 let appSettings = { ...DEFAULT_APP_SETTINGS };
 
@@ -85,6 +86,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadStats();
     loadPositions();
     loadSchools();
+    loadRankBoardSettings();
     setupEventListeners();
 
     const savedTabId = getSavedActiveTabId();
@@ -191,16 +193,49 @@ async function loadPositions() {
         const randomizerContainer = document.getElementById('position-filters');
         const searchContainer = document.getElementById('search-position-filters');
         const boardPositionSelect = document.getElementById('bigboard-position-select');
+        const exportPositionSelect = document.getElementById('export-position-select');
+        const editPositionSelect = document.getElementById('edit-position-input');
         randomizerContainer.innerHTML = '';
         searchContainer.innerHTML = '';
         boardPositionSelect.innerHTML = '';
+        if (exportPositionSelect) {
+            exportPositionSelect.innerHTML = '<option value="">Select position for export...</option>';
+        }
+        if (editPositionSelect) {
+            editPositionSelect.innerHTML = '<option value="">Select position...</option>';
+        }
 
         positions.forEach(position => {
             const option = document.createElement('option');
             option.value = position;
             option.textContent = position;
             boardPositionSelect.appendChild(option);
+
+            if (exportPositionSelect) {
+                const exportOption = document.createElement('option');
+                exportOption.value = position;
+                exportOption.textContent = position;
+                exportPositionSelect.appendChild(exportOption);
+            }
+
+            if (editPositionSelect) {
+                const editOption = document.createElement('option');
+                editOption.value = position;
+                editOption.textContent = position;
+                editPositionSelect.appendChild(editOption);
+            }
         });
+
+        if (editPositionSelect && currentPlayer && currentPlayer.position) {
+            const currentPosition = currentPlayer.position;
+            const hasOption = Array.from(editPositionSelect.options).some(option => option.value === currentPosition);
+            if (!hasOption) {
+                const customOption = document.createElement('option');
+                customOption.value = currentPosition;
+                customOption.textContent = currentPosition;
+                editPositionSelect.appendChild(customOption);
+            }
+        }
         if (positions.length) {
             if (currentBigBoardPosition && positions.includes(currentBigBoardPosition)) {
                 boardPositionSelect.value = currentBigBoardPosition;
@@ -238,13 +273,14 @@ async function loadSchools() {
         const response = await fetch('/api/schools');
         const schools = await response.json();
 
-        const schoolsList = document.getElementById('schools-list');
-        schoolsList.innerHTML = '';
+        const schoolSelect = document.getElementById('school-search-input');
+        schoolSelect.innerHTML = '<option value="">All schools</option>';
 
         schools.forEach(school => {
             const option = document.createElement('option');
             option.value = school;
-            schoolsList.appendChild(option);
+            option.textContent = school;
+            schoolSelect.appendChild(option);
         });
     } catch (error) {
         console.error('Error loading schools:', error);
@@ -282,6 +318,20 @@ function setupEventListeners() {
             return;
         }
 
+        const profileDialog = document.getElementById('edit-profile-dialog');
+        if (profileDialog && !profileDialog.classList.contains('hidden')) {
+            event.preventDefault();
+            closeEditProfileDialog();
+            return;
+        }
+
+        const importUrlDialog = document.getElementById('import-nflmock-url-dialog');
+        if (importUrlDialog && !importUrlDialog.classList.contains('hidden')) {
+            event.preventDefault();
+            closeImportNflmockUrlDialog();
+            return;
+        }
+
         const overlay = document.getElementById('player-report-overlay');
         if (overlay && !overlay.classList.contains('hidden')) {
             event.preventDefault();
@@ -297,16 +347,7 @@ function setupEventListeners() {
         updateGrade(this.value, 'secondary');
     });
  
-    // Clickable rank badges
-    document.getElementById('player-rank').addEventListener('click', function() {
-        ranksRevealed = !ranksRevealed;
-        toggleRankVisibility();
-    });
- 
-    document.getElementById('player-pos-rank').addEventListener('click', function() {
-        posRanksRevealed = !posRanksRevealed;
-        togglePosRankVisibility();
-    });
+    document.getElementById('player-board-ranks-toggle').addEventListener('click', toggleBoardRanksVisibility);
 
     document.getElementById('search-btn').addEventListener('click', searchPlayers);
     document.getElementById('search-input').addEventListener('keydown', function(event) {
@@ -336,17 +377,14 @@ function setupEventListeners() {
         applyVisualSettings();
     });
 
-    document.getElementById('show-ranks-checkbox').addEventListener('change', function() {
-        appSettings.showRanksInLists = this.checked;
-        saveAppSettings();
-        if (document.getElementById('search-tab').classList.contains('active')) {
-            searchPlayers();
-        }
-        if (document.getElementById('bigboard-tab').classList.contains('active')) {
+    const showConsensusGradeCheckbox = document.getElementById('show-consensus-grade-checkbox');
+    if (showConsensusGradeCheckbox) {
+        showConsensusGradeCheckbox.addEventListener('change', function() {
+            appSettings.showConsensusGradeOnBigBoard = this.checked;
+            saveAppSettings();
             loadBigBoard();
-            searchBigBoardPlayers();
-        }
-    });
+        });
+    }
 
     document.querySelectorAll('.grading-system-checkbox').forEach(checkbox => {
         checkbox.addEventListener('change', handleGradingSystemsChange);
@@ -355,6 +393,15 @@ function setupEventListeners() {
     document.getElementById('toggle-add-player-btn').addEventListener('click', toggleAddPlayerPanel);
     document.getElementById('refresh-logos-btn').addEventListener('click', refreshDownloadedLogos);
     document.getElementById('update-rankings-btn').addEventListener('click', updateRankingsFromTankathon);
+    document.getElementById('import-consensus-btn').addEventListener('click', importConsensusBoard);
+    document.getElementById('import-nflmock-url-btn').addEventListener('click', openImportNflmockUrlDialog);
+    document.getElementById('merge-duplicates-btn').addEventListener('click', mergeDuplicatePlayers);
+    document.getElementById('board-import-files').addEventListener('change', handleBoardFilesSelected);
+    document.getElementById('use-board-weights-checkbox').addEventListener('change', syncBoardWeightInputs);
+    document.getElementById('import-big-boards-btn').addEventListener('click', importAndNormalizeBigBoards);
+    document.getElementById('export-overall-board-btn').addEventListener('click', () => exportNormalizedBigBoard('overall'));
+    document.getElementById('export-position-board-btn').addEventListener('click', () => exportNormalizedBigBoard('position'));
+    document.getElementById('save-board-weights-btn').addEventListener('click', saveRankBoardSettings);
 
     document.getElementById('overall-board-btn').addEventListener('click', () => setBigBoardType('overall'));
     document.getElementById('position-board-btn').addEventListener('click', () => setBigBoardType('position'));
@@ -368,8 +415,27 @@ function setupEventListeners() {
     document.getElementById('confirm-add-to-rank-btn').addEventListener('click', confirmAddToRank);
     document.getElementById('confirm-add-to-bottom-btn').addEventListener('click', confirmAddToBottom);
     document.getElementById('cancel-add-to-board-btn').addEventListener('click', closeAddToBoardDialog);
+    document.getElementById('close-import-nflmock-url-btn').addEventListener('click', closeImportNflmockUrlDialog);
+    document.getElementById('confirm-import-nflmock-url-btn').addEventListener('click', importNflmockBoardByUrl);
+    document.getElementById('open-nflmock-boards-btn').addEventListener('click', function() {
+        window.open('https://www.nflmockdraftdatabase.com/big-boards/2026', '_blank', 'noopener');
+    });
+    document.getElementById('import-nflmock-url-dialog').addEventListener('click', function(event) {
+        if (event.target === this) {
+            closeImportNflmockUrlDialog();
+        }
+    });
 
     document.getElementById('settings-add-player-btn').addEventListener('click', addPlayerFromSettings);
+    document.getElementById('open-profile-edit-btn').addEventListener('click', openEditProfileDialog);
+    document.getElementById('close-profile-edit-btn').addEventListener('click', closeEditProfileDialog);
+    document.getElementById('add-profile-stat-btn').addEventListener('click', () => addProfileStatRow());
+    document.getElementById('save-profile-btn').addEventListener('click', savePlayerProfile);
+    document.getElementById('edit-profile-dialog').addEventListener('click', function(event) {
+        if (event.target === this) {
+            closeEditProfileDialog();
+        }
+    });
 }
 
 function toggleAddPlayerPanel() {
@@ -469,6 +535,530 @@ async function refreshDownloadedLogos() {
 
 async function updateRankingsFromTankathon() {
     await runSettingsTool('/api/settings/update-rankings', 'update-rankings-btn', 'Rankings updated from Tankathon.');
+    loadRankBoardSettings();
+}
+
+async function importConsensusBoard() {
+    await runSettingsTool('/api/settings/import-consensus-board', 'import-consensus-btn', 'Consensus board imported successfully.');
+    loadRankBoardSettings();
+}
+
+function openImportNflmockUrlDialog() {
+    const dialog = document.getElementById('import-nflmock-url-dialog');
+    const input = document.getElementById('nflmock-board-url-input');
+    const customNameInput = document.getElementById('nflmock-board-custom-name-input');
+    const message = document.getElementById('nflmock-url-message');
+
+    if (!dialog || !input || !message) {
+        return;
+    }
+
+    message.classList.add('hidden');
+    message.textContent = '';
+    input.value = '';
+    if (customNameInput) {
+        customNameInput.value = '';
+    }
+    dialog.classList.remove('hidden');
+    input.focus();
+}
+
+function closeImportNflmockUrlDialog() {
+    const dialog = document.getElementById('import-nflmock-url-dialog');
+    if (dialog) {
+        dialog.classList.add('hidden');
+    }
+}
+
+async function importNflmockBoardByUrl() {
+    const input = document.getElementById('nflmock-board-url-input');
+    const customNameInput = document.getElementById('nflmock-board-custom-name-input');
+    const message = document.getElementById('nflmock-url-message');
+    const button = document.getElementById('confirm-import-nflmock-url-btn');
+    const url = (input?.value || '').trim();
+    const customBoardName = (customNameInput?.value || '').trim();
+
+    if (!url) {
+        message.textContent = 'Paste a valid NFLMockDraftDatabase big board URL.';
+        message.classList.remove('hidden');
+        return;
+    }
+
+    button.disabled = true;
+    message.classList.remove('hidden');
+    message.textContent = 'Importing board from URL...';
+
+    try {
+        const response = await fetch('/api/settings/import-nflmock-board-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                url,
+                board_name: customBoardName || null
+            })
+        });
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+            const errorText = result.error || 'Could not import board from URL.';
+            message.textContent = errorText;
+            showToast('Import Failed', errorText, 'error', 9000);
+            return;
+        }
+
+        const successText = `Imported ${result.board_name} (${result.entries_imported} players).`;
+        message.textContent = successText;
+        showToast('Board Imported', successText, 'success', 9000);
+        closeImportNflmockUrlDialog();
+        loadRankBoardSettings();
+        loadStats();
+        if (document.getElementById('search-tab').classList.contains('active')) {
+            searchPlayers();
+        }
+        if (document.getElementById('bigboard-tab').classList.contains('active')) {
+            loadBigBoard();
+            searchBigBoardPlayers();
+        }
+    } catch (error) {
+        console.error('Error importing URL board:', error);
+        message.textContent = 'Error importing board URL. Please try again.';
+        showToast('Import Failed', 'Error importing board URL. Please try again.', 'error', 9000);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function mergeDuplicatePlayers() {
+    await runSettingsTool('/api/settings/merge-player-duplicates', 'merge-duplicates-btn', 'Duplicate player variants merged.');
+    loadRankBoardSettings();
+}
+
+async function loadRankBoardSettings() {
+    const container = document.getElementById('board-weights-list');
+    if (!container) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/settings/rank-boards');
+        const payload = await response.json();
+        if (!response.ok || !payload.success) {
+            container.innerHTML = '<p class="search-empty">Unable to load board weight settings.</p>';
+            return;
+        }
+
+        renderRankBoardSettings(payload.boards || []);
+    } catch (error) {
+        console.error('Error loading rank board settings:', error);
+        container.innerHTML = '<p class="search-empty">Unable to load board weight settings.</p>';
+    }
+}
+
+function renderRankBoardSettings(boards) {
+    const container = document.getElementById('board-weights-list');
+    const useCustomWeights = document.getElementById('use-board-weights-checkbox')?.checked;
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = '';
+    if (!Array.isArray(boards) || boards.length === 0) {
+        container.innerHTML = '<p class="search-empty">No board settings available.</p>';
+        return;
+    }
+
+    boards.forEach((board, index) => {
+        const row = document.createElement('div');
+        row.className = 'board-weight-row';
+        row.dataset.boardKey = board.board_key;
+
+        const nameWrap = document.createElement('div');
+        const name = document.createElement('div');
+        name.className = 'board-weight-name';
+        name.textContent = board.board_name;
+
+        const type = document.createElement('div');
+        type.className = 'board-weight-type';
+        type.textContent = `${board.source_type} • ${board.player_count} players ranked`;
+
+        nameWrap.appendChild(name);
+        nameWrap.appendChild(type);
+
+        const weightInput = document.createElement('input');
+        weightInput.type = 'number';
+        weightInput.step = '0.1';
+        weightInput.min = '0';
+        weightInput.value = Number.isFinite(Number(board.weight)) ? String(board.weight) : '1';
+        weightInput.className = 'search-input board-weight-input rank-weight-input';
+        weightInput.dataset.boardKey = board.board_key;
+        weightInput.dataset.boardName = board.board_name;
+        weightInput.title = 'Weight used in weighted average ranking';
+        weightInput.setAttribute('aria-label', `Weight for ${board.board_name}`);
+        weightInput.disabled = !useCustomWeights;
+        weightInput.addEventListener('input', updateBoardWeightingSummary);
+
+        const weightWrap = document.createElement('div');
+        weightWrap.className = 'board-weight-value-wrap';
+        const weightLabel = document.createElement('span');
+        weightLabel.className = 'board-weight-input-label';
+        if (useCustomWeights) {
+            weightLabel.textContent = 'Weight';
+        } else {
+            weightInput.value = '1';
+            weightLabel.textContent = 'Equal weight';
+        }
+        weightWrap.appendChild(weightLabel);
+        weightWrap.appendChild(weightInput);
+
+        const primaryWrap = document.createElement('label');
+        primaryWrap.className = 'board-primary-select';
+        const primaryRadio = document.createElement('input');
+        primaryRadio.type = 'radio';
+        primaryRadio.name = 'primary-rank-board';
+        primaryRadio.value = board.board_key;
+        primaryRadio.checked = !!board.is_primary;
+        primaryRadio.dataset.boardKey = board.board_key;
+        primaryRadio.addEventListener('change', updateBoardWeightingSummary);
+        const primaryText = document.createElement('span');
+        primaryText.className = 'board-primary-text';
+        primaryText.textContent = 'Primary Default';
+        primaryWrap.appendChild(primaryRadio);
+        primaryWrap.appendChild(primaryText);
+
+        const visibilityWrap = document.createElement('label');
+        visibilityWrap.className = 'board-visibility-select';
+        const visibilityCheckbox = document.createElement('input');
+        visibilityCheckbox.type = 'checkbox';
+        visibilityCheckbox.checked = isRankBoardVisible(board.board_key);
+        visibilityCheckbox.setAttribute('aria-label', `Show ${board.board_name} in player ranking pills`);
+        visibilityCheckbox.addEventListener('change', function() {
+            setRankBoardVisibility(board.board_key, this.checked);
+        });
+        const visibilityText = document.createElement('span');
+        visibilityText.textContent = 'Show in ranks';
+        visibilityWrap.appendChild(visibilityCheckbox);
+        visibilityWrap.appendChild(visibilityText);
+
+        row.appendChild(nameWrap);
+        row.appendChild(weightWrap);
+        row.appendChild(primaryWrap);
+        row.appendChild(visibilityWrap);
+        container.appendChild(row);
+
+        if (index === boards.length - 1 && !boards.some(item => item.is_primary) && primaryRadio) {
+            primaryRadio.checked = true;
+        }
+    });
+
+    updateBoardWeightingSummary();
+}
+
+function updateBoardWeightingSummary() {
+    const summaryEl = document.getElementById('board-weighting-summary');
+    if (!summaryEl) {
+        return;
+    }
+
+    const useCustomWeights = document.getElementById('use-board-weights-checkbox')?.checked;
+
+    const weightInputs = Array.from(document.querySelectorAll('.rank-weight-input'));
+    if (!weightInputs.length) {
+        summaryEl.textContent = 'No board weights loaded yet.';
+        return;
+    }
+
+    const rows = weightInputs.map(input => {
+        const raw = Number(input.value);
+        const weight = Number.isFinite(raw) && raw > 0 ? raw : 0;
+        return {
+            boardKey: input.dataset.boardKey,
+            boardName: input.dataset.boardName || input.dataset.boardKey,
+            weight
+        };
+    });
+
+    const totalWeight = useCustomWeights
+        ? rows.reduce((sum, row) => sum + row.weight, 0)
+        : rows.length;
+    const primaryRadio = document.querySelector('input[name="primary-rank-board"]:checked');
+    const primaryKey = primaryRadio ? primaryRadio.value : null;
+    const primaryName = rows.find(row => row.boardKey === primaryKey)?.boardName || 'None selected';
+
+    if (!useCustomWeights) {
+        summaryEl.textContent = `Primary Default: ${primaryName}. Equal average mode is active (all boards weighted evenly).`;
+        return;
+    }
+
+    if (totalWeight <= 0) {
+        summaryEl.textContent = `Primary Default: ${primaryName}. Weighted Avg formula: Σ(rank × weight) ÷ Σ(weights). All current weights are 0, so weighted average is disabled.`;
+        return;
+    }
+
+    const contributionText = rows
+        .filter(row => row.weight > 0)
+        .map(row => `${row.boardName} ${((row.weight / totalWeight) * 100).toFixed(1)}%`)
+        .join(' • ');
+
+    summaryEl.textContent = `Primary Default: ${primaryName}. Weighted Avg = Σ(rank × weight) ÷ Σ(weights). Current contributions: ${contributionText}.`;
+}
+
+async function saveRankBoardSettings() {
+    const button = document.getElementById('save-board-weights-btn');
+    const messageEl = document.getElementById('board-import-message');
+    const useCustomWeights = document.getElementById('use-board-weights-checkbox')?.checked;
+    const weightInputs = Array.from(document.querySelectorAll('.rank-weight-input'));
+    const primaryRadio = document.querySelector('input[name="primary-rank-board"]:checked');
+
+    if (!weightInputs.length) {
+        messageEl.textContent = 'No board weights to save yet.';
+        messageEl.classList.remove('hidden');
+        return;
+    }
+
+    const updates = weightInputs.map(input => ({
+        board_key: input.dataset.boardKey,
+        weight: useCustomWeights ? parseFloat(input.value || '0') : 1,
+        is_primary: primaryRadio ? primaryRadio.value === input.dataset.boardKey : false
+    }));
+
+    button.disabled = true;
+    try {
+        const response = await fetch('/api/settings/rank-boards', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ boards: updates })
+        });
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+            const errorText = result.error || 'Could not save board settings.';
+            messageEl.textContent = errorText;
+            messageEl.classList.remove('hidden');
+            showToast('Save Failed', errorText, 'error', 7000);
+            return;
+        }
+
+        messageEl.textContent = 'Board weights updated.';
+        messageEl.classList.remove('hidden');
+        showToast('Board Settings Saved', 'Weights and primary default board updated.', 'success', 5000);
+        await loadRankBoardSettings();
+        loadStats();
+        if (document.getElementById('search-tab').classList.contains('active')) {
+            searchPlayers();
+        }
+        if (document.getElementById('bigboard-tab').classList.contains('active')) {
+            loadBigBoard();
+            searchBigBoardPlayers();
+        }
+    } catch (error) {
+        console.error('Error saving rank board settings:', error);
+        messageEl.textContent = 'Error saving board settings. Please try again.';
+        messageEl.classList.remove('hidden');
+    } finally {
+        button.disabled = false;
+    }
+}
+
+function handleBoardFilesSelected(event) {
+    const files = Array.from(event.target.files || []);
+    importedBoardFiles = files.map(file => ({
+        file,
+        weight: 1
+    }));
+    renderImportedBoardList();
+}
+
+function renderImportedBoardList() {
+    const container = document.getElementById('board-import-list');
+    const useWeights = document.getElementById('use-board-weights-checkbox').checked;
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = '';
+
+    if (!importedBoardFiles.length) {
+        container.classList.add('hidden');
+        return;
+    }
+
+    container.classList.remove('hidden');
+
+    importedBoardFiles.forEach((boardFile, index) => {
+        const row = document.createElement('div');
+        row.className = 'board-import-row';
+
+        const name = document.createElement('div');
+        name.className = 'board-import-name';
+        name.textContent = boardFile.file.name;
+
+        const weightWrap = document.createElement('div');
+        weightWrap.className = 'board-import-weight-wrap';
+
+        const weightLabel = document.createElement('label');
+        weightLabel.textContent = 'Weight';
+        weightLabel.setAttribute('for', `board-weight-${index}`);
+
+        const weightInput = document.createElement('input');
+        weightInput.id = `board-weight-${index}`;
+        weightInput.type = 'number';
+        weightInput.step = '0.1';
+        weightInput.min = '0.1';
+        weightInput.value = String(boardFile.weight || 1);
+        weightInput.className = 'search-input board-weight-input imported-board-weight-input';
+        weightInput.disabled = !useWeights;
+        weightInput.addEventListener('input', function() {
+            const parsed = parseFloat(this.value);
+            importedBoardFiles[index].weight = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+        });
+
+        if (useWeights) {
+            weightWrap.appendChild(weightLabel);
+            weightWrap.appendChild(weightInput);
+        } else {
+            const equalWeightNote = document.createElement('span');
+            equalWeightNote.className = 'search-empty';
+            equalWeightNote.textContent = 'Equal weight';
+            weightWrap.appendChild(equalWeightNote);
+        }
+        row.appendChild(name);
+        row.appendChild(weightWrap);
+        container.appendChild(row);
+    });
+}
+
+function syncBoardWeightInputs() {
+    renderImportedBoardList();
+    loadRankBoardSettings();
+}
+
+async function importAndNormalizeBigBoards() {
+    const button = document.getElementById('import-big-boards-btn');
+    const messageEl = document.getElementById('board-import-message');
+    const useWeights = document.getElementById('use-board-weights-checkbox').checked;
+
+    if (!importedBoardFiles.length) {
+        messageEl.textContent = 'Select at least one .txt file to import.';
+        messageEl.classList.remove('hidden');
+        return;
+    }
+
+    messageEl.classList.remove('hidden');
+    messageEl.textContent = 'Importing and normalizing rankings...';
+    button.disabled = true;
+
+    try {
+        const boardsPayload = [];
+
+        for (const boardFile of importedBoardFiles) {
+            const text = await boardFile.file.text();
+            boardsPayload.push({
+                name: boardFile.file.name,
+                text,
+                weight: boardFile.weight
+            });
+        }
+
+        const response = await fetch('/api/settings/import-big-boards', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                weighting_mode: useWeights ? 'weighted' : 'equal',
+                boards: boardsPayload
+            })
+        });
+
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            const errorText = result.error || 'Failed to import boards.';
+            messageEl.textContent = errorText;
+            showToast('Import Failed', errorText, 'error', 9000);
+            return;
+        }
+
+        const summary = `${result.players_ranked_from_import} players normalized from ${result.boards_processed} board(s). Unmatched names: ${result.unmatched_count}.`;
+        messageEl.textContent = summary;
+        showToast('Big Boards Imported', summary, 'success', 9000);
+
+        loadRankBoardSettings();
+        loadStats();
+        loadPositions();
+        loadSchools();
+        if (document.getElementById('search-tab').classList.contains('active')) {
+            searchPlayers();
+        }
+        if (document.getElementById('bigboard-tab').classList.contains('active')) {
+            loadBigBoard();
+            searchBigBoardPlayers();
+        }
+    } catch (error) {
+        console.error('Error importing big boards:', error);
+        messageEl.textContent = 'Error importing boards. Please try again.';
+        showToast('Import Failed', 'Error importing boards. Please try again.', 'error', 9000);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function exportNormalizedBigBoard(scope) {
+    const positionSelect = document.getElementById('export-position-select');
+    const messageEl = document.getElementById('board-import-message');
+    const params = new URLSearchParams();
+    params.append('scope', scope);
+
+    if (scope === 'position') {
+        const position = (positionSelect.value || '').trim();
+        if (!position) {
+            messageEl.textContent = 'Select a position before exporting a positional board.';
+            messageEl.classList.remove('hidden');
+            return;
+        }
+        params.append('position', position);
+    }
+
+    try {
+        const response = await fetch(`/api/settings/export-big-board?${params.toString()}`);
+        if (!response.ok) {
+            let errorText = 'Failed to export board.';
+            try {
+                const errorJson = await response.json();
+                errorText = errorJson.error || errorText;
+            } catch {
+                // no-op
+            }
+            messageEl.textContent = errorText;
+            messageEl.classList.remove('hidden');
+            showToast('Export Failed', errorText, 'error', 7000);
+            return;
+        }
+
+        const text = await response.text();
+        const filename = scope === 'position'
+            ? `big_board_${positionSelect.value.toLowerCase()}.txt`
+            : 'big_board_overall.txt';
+
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+
+        const successMessage = scope === 'position'
+            ? `Exported ${positionSelect.value} board.`
+            : 'Exported overall board.';
+        messageEl.textContent = successMessage;
+        messageEl.classList.remove('hidden');
+        showToast('Export Complete', successMessage, 'success', 5000);
+    } catch (error) {
+        console.error('Error exporting big board:', error);
+        messageEl.textContent = 'Error exporting board. Please try again.';
+        messageEl.classList.remove('hidden');
+        showToast('Export Failed', 'Error exporting board. Please try again.', 'error', 7000);
+    }
 }
 
 function loadAppSettings() {
@@ -485,6 +1075,9 @@ function loadAppSettings() {
         const normalizedSystems = Array.isArray(parsed.gradingSystems)
             ? parsed.gradingSystems.filter(system => validSystems.includes(system)).slice(0, 2)
             : [];
+        const hiddenRankBoardKeys = Array.isArray(parsed.hiddenRankBoardKeys)
+            ? parsed.hiddenRankBoardKeys.filter(key => typeof key === 'string' && key.trim())
+            : [];
 
         const parsedTheme = validThemes.includes(parsed.theme) ? parsed.theme : DEFAULT_APP_SETTINGS.theme;
         const normalizedTheme = parsedTheme === 'neon-night' ? 'default' :
@@ -497,7 +1090,8 @@ function loadAppSettings() {
             gradingSystems: normalizedSystems.length
                 ? normalizedSystems
                 : [...DEFAULT_APP_SETTINGS.gradingSystems],
-            showRanksInLists: parsed.showRanksInLists !== false
+            showConsensusGradeOnBigBoard: Boolean(parsed.showConsensusGradeOnBigBoard),
+            hiddenRankBoardKeys
         };
     } catch (error) {
         console.error('Error loading app settings:', error);
@@ -507,6 +1101,41 @@ function loadAppSettings() {
 
 function saveAppSettings() {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(appSettings));
+}
+
+function isRankBoardVisible(boardKey) {
+    if (!boardKey) {
+        return true;
+    }
+
+    const hiddenKeys = Array.isArray(appSettings.hiddenRankBoardKeys)
+        ? appSettings.hiddenRankBoardKeys
+        : [];
+    return !hiddenKeys.includes(boardKey);
+}
+
+function setRankBoardVisibility(boardKey, isVisible) {
+    if (!boardKey) {
+        return;
+    }
+
+    const hiddenKeys = new Set(Array.isArray(appSettings.hiddenRankBoardKeys)
+        ? appSettings.hiddenRankBoardKeys
+        : []);
+
+    if (isVisible) {
+        hiddenKeys.delete(boardKey);
+    } else {
+        hiddenKeys.add(boardKey);
+    }
+
+    appSettings.hiddenRankBoardKeys = Array.from(hiddenKeys);
+    saveAppSettings();
+
+    if (currentPlayer) {
+        renderPlayerBoardRanks(currentPlayer);
+        applyBoardRanksVisibility();
+    }
 }
 
 function applyVisualSettings() {
@@ -611,7 +1240,7 @@ function syncSettingsControls() {
     const themeSelect = document.getElementById('theme-select');
     const teamSelect = document.getElementById('theme-team-select');
     const fontSelect = document.getElementById('font-select');
-    const showRanksCheckbox = document.getElementById('show-ranks-checkbox');
+    const showConsensusGradeCheckbox = document.getElementById('show-consensus-grade-checkbox');
     if (themeSelect) {
         themeSelect.value = appSettings.theme;
     }
@@ -621,8 +1250,8 @@ function syncSettingsControls() {
     if (fontSelect) {
         fontSelect.value = appSettings.font;
     }
-    if (showRanksCheckbox) {
-        showRanksCheckbox.checked = appSettings.showRanksInLists !== false;
+    if (showConsensusGradeCheckbox) {
+        showConsensusGradeCheckbox.checked = !!appSettings.showConsensusGradeOnBigBoard;
     }
 
     toggleTeamThemeSelector();
@@ -828,6 +1457,29 @@ function hasAnyGrade(player) {
     return Boolean((player.grade || '').trim() || (player.grade_secondary || '').trim());
 }
 
+function getPreferredOverallRank(player) {
+    if (!player) {
+        return null;
+    }
+
+    const directRank = Number(player.rank);
+    if (Number.isFinite(directRank) && directRank > 0) {
+        return Math.round(directRank);
+    }
+
+    const weightedRank = Number(player.weighted_avg_rank ?? player.weighted_average_rank);
+    if (Number.isFinite(weightedRank) && weightedRank > 0) {
+        return Math.round(weightedRank);
+    }
+
+    const tankathonRank = Number(player.tankathon_rank);
+    if (Number.isFinite(tankathonRank) && tankathonRank > 0) {
+        return Math.round(tankathonRank);
+    }
+
+    return null;
+}
+
 function comparePlayersForBigBoardAdd(a, b) {
     const aPriority = a.scouted ? 0 : (hasAnyGrade(a) ? 1 : 2);
     const bPriority = b.scouted ? 0 : (hasAnyGrade(b) ? 1 : 2);
@@ -912,8 +1564,13 @@ function renderBigBoard(entries) {
         const meta = document.createElement('div');
         meta.className = 'bigboard-meta';
         const metaParts = [entry.position || 'N/A', entry.school || 'Unknown'];
-        if (appSettings.showRanksInLists !== false && entry.rank) {
-            metaParts.push(`#${entry.rank}`);
+        if (appSettings.showConsensusGradeOnBigBoard) {
+            const consensusRank = Number(entry.consensus_rank);
+            if (Number.isFinite(consensusRank) && consensusRank > 0) {
+                metaParts.push(`Consensus Grade #${Math.round(consensusRank)}`);
+            } else {
+                metaParts.push('Consensus Grade N/A');
+            }
         }
         if (entry.grade) {
             metaParts.push(entry.grade);
@@ -1216,27 +1873,32 @@ async function searchBigBoardPlayers() {
 
             const meta = document.createElement('div');
             meta.className = 'search-result-meta';
-            const rankText = player.rank ? `#${player.rank}` : 'Unranked';
             const metaParts = [player.position || 'N/A', player.school || 'Unknown'];
-            if (appSettings.showRanksInLists !== false) {
-                metaParts.push(rankText);
-            }
             if (player.grade) {
                 metaParts.push(player.grade);
             }
             meta.textContent = metaParts.join(' • ');
 
+            const scoutStatus = document.createElement('div');
+            scoutStatus.className = `bigboard-scout-status ${player.scouted ? 'scouted' : 'not-scouted'}`;
+            scoutStatus.textContent = player.scouted ? 'Scouted' : 'Not Scouted';
+
             const addBtn = document.createElement('button');
-            addBtn.className = 'mini-btn';
+            addBtn.className = 'mini-btn bigboard-add-btn';
             addBtn.textContent = 'Add to Board';
             addBtn.addEventListener('click', async (event) => {
                 event.stopPropagation();
                 openAddToBoardDialog(player);
             });
 
+            const actionsWrap = document.createElement('div');
+            actionsWrap.className = 'bigboard-add-actions';
+            actionsWrap.appendChild(scoutStatus);
+            actionsWrap.appendChild(addBtn);
+
             card.appendChild(name);
             card.appendChild(meta);
-            card.appendChild(addBtn);
+            card.appendChild(actionsWrap);
             resultsContainer.appendChild(card);
         });
     } catch (error) {
@@ -1266,7 +1928,7 @@ function openAddToBoardDialog(player) {
     const maxRank = boardCount + 1;
 
     title.textContent = `Add ${player.name} to Big Board`;
-    input.value = '';
+    input.value = String(maxRank);
     input.min = '1';
     input.max = String(maxRank);
     input.placeholder = `1-${maxRank}`;
@@ -1481,42 +2143,23 @@ async function addPlayerFromSettings() {
     }
 }
 
-// Toggle rank visibility
-function toggleRankVisibility() {
-    const rankBadge = document.getElementById('player-rank');
-    const rankValue = rankBadge.querySelector('.rank-value');
- 
-    if (ranksRevealed && currentPlayer) {
-        rankValue.textContent = `#${currentPlayer.rank}`;
-        rankBadge.classList.add('revealed');
-    } else {
-        rankValue.textContent = '???';
-        rankBadge.classList.remove('revealed');
+function applyBoardRanksVisibility() {
+    const ranksContainer = document.getElementById('player-board-ranks');
+    const toggleValue = document.getElementById('board-ranks-toggle-value');
+    const toggleBadge = document.getElementById('player-board-ranks-toggle');
+
+    if (!ranksContainer || !toggleValue || !toggleBadge) {
+        return;
     }
+
+    ranksContainer.classList.toggle('hidden', !boardRanksRevealed);
+    toggleValue.textContent = boardRanksRevealed ? 'Shown' : 'Hidden';
+    toggleBadge.classList.toggle('revealed', boardRanksRevealed);
 }
 
-// Toggle positional rank visibility
-function togglePosRankVisibility() {
-    const posRankBadge = document.getElementById('player-pos-rank');
-    const posRankValue = posRankBadge.querySelector('.pos-rank-value');
- 
-    if (posRanksRevealed && currentPlayer) {
-        // Show positional rank - check if it exists and is not empty
-        const hasRank = currentPlayer.positional_rank &&
-                     currentPlayer.positional_rank !== '' &&
-                     currentPlayer.positional_rank !== 'null' &&
-                     currentPlayer.positional_rank !== 'undefined';
-     
-        if (hasRank) {
-            posRankValue.textContent = `#${currentPlayer.positional_rank}`;
-        } else {
-            posRankValue.textContent = 'N/A';
-        }
-        posRankBadge.classList.add('revealed');
-    } else {
-        posRankValue.textContent = '???';
-        posRankBadge.classList.remove('revealed');
-    }
+function toggleBoardRanksVisibility() {
+    boardRanksRevealed = !boardRanksRevealed;
+    applyBoardRanksVisibility();
 }
 
 // Toggle position filter
@@ -1603,10 +2246,9 @@ function renderSearchResults(players) {
         const positionText = player.position || 'N/A';
         const schoolText = player.school || 'Unknown School';
         const metaParts = [positionText, schoolText];
-        if (appSettings.showRanksInLists !== false) {
-            const rankText = player.rank ? `#${player.rank}` : 'Unranked';
-            metaParts.push(rankText);
-        }
+        const preferredRank = getPreferredOverallRank(player);
+        const rankText = preferredRank ? `#${preferredRank}` : 'Unranked';
+        metaParts.push(rankText);
         meta.textContent = metaParts.join(' • ');
 
         card.appendChild(name);
@@ -1818,15 +2460,7 @@ function displayPlayerDetails(player) {
         jerseyBadge.style.display = 'none';
     }
  
-    // Update rank (hidden by default)
-    const rankBadge = document.getElementById('player-rank');
-    rankBadge.style.display = 'inline-block';
-    toggleRankVisibility();
- 
-    // Update positional rank (always show, even if data is missing)
-    const posRankBadge = document.getElementById('player-pos-rank');
-    posRankBadge.style.display = 'inline-block';
-    togglePosRankVisibility();
+    boardRanksRevealed = false;
  
     // Update measurements
     document.getElementById('player-height').textContent = player.height || 'N/A';
@@ -1858,6 +2492,9 @@ function displayPlayerDetails(player) {
     if (statsGrid.children.length === 0) {
         statsGrid.innerHTML = '<p style="color: var(--text-secondary);">No statistics available</p>';
     }
+
+    renderPlayerBoardRanks(player);
+    applyBoardRanksVisibility();
  
     // Update external links
     if (player.sports_reference_url) {
@@ -1911,6 +2548,98 @@ function displayPlayerDetails(player) {
     }
 }
 
+function renderPlayerBoardRanks(player) {
+    const container = document.getElementById('player-board-ranks');
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = '';
+
+    const overallRow = document.createElement('div');
+    overallRow.className = 'board-ranks-row board-ranks-overall-row';
+
+    const positionalRow = document.createElement('div');
+    positionalRow.className = 'board-ranks-row board-ranks-positional-row';
+
+    const appendRankPill = (targetRow, label, value, extraClass = '') => {
+        if (value === null || value === undefined || value === '') {
+            return;
+        }
+        const pill = document.createElement('div');
+        pill.className = `board-rank-pill ${extraClass}`.trim();
+        pill.textContent = `${label}: #${value}`;
+        targetRow.appendChild(pill);
+    };
+
+    const boardRanks = Array.isArray(player.board_ranks) ? player.board_ranks : [];
+    const seenBoardLabels = new Set();
+    const showConsensusBoard = isRankBoardVisible('consensus_2026');
+
+    const consensusBoardRank = boardRanks.find(board => board.board_key === 'consensus_2026');
+    if (consensusBoardRank && showConsensusBoard) {
+        const consensusRankNumber = Number.isFinite(Number(consensusBoardRank.rank))
+            ? Number(consensusBoardRank.rank).toFixed(1).replace('.0', '')
+            : consensusBoardRank.rank;
+        appendRankPill(overallRow, 'Consensus Big Board 2026', consensusRankNumber, 'primary');
+        const consensusLabel = (consensusBoardRank.board_name || '').trim().toLowerCase();
+        if (consensusLabel) {
+            seenBoardLabels.add(consensusLabel);
+        }
+    } else if (showConsensusBoard) {
+        const overallRank = getPreferredOverallRank(player);
+        if (overallRank) {
+            appendRankPill(overallRow, 'Consensus Big Board 2026', overallRank, 'primary');
+        }
+    }
+
+    const personalBigBoardRank = Number(player.personal_big_board_rank);
+    if (Number.isFinite(personalBigBoardRank) && personalBigBoardRank > 0) {
+        appendRankPill(overallRow, 'Personal Big Board', Math.round(personalBigBoardRank));
+    }
+
+    if (player.positional_rank && String(player.positional_rank).trim()) {
+        appendRankPill(positionalRow, 'Consensus Pos Rank', String(player.positional_rank).trim());
+    }
+
+    const personalPosRank = Number(player.personal_pos_rank);
+    if (Number.isFinite(personalPosRank) && personalPosRank > 0) {
+        appendRankPill(positionalRow, 'Personal Pos Rank', Math.round(personalPosRank));
+    }
+
+    if (player.weighted_average_rank) {
+        appendRankPill(overallRow, 'Weighted Avg', Number(player.weighted_average_rank).toFixed(1));
+    }
+
+    boardRanks.forEach(board => {
+        if (!isRankBoardVisible(board.board_key)) {
+            return;
+        }
+        const boardLabel = (board.board_name || '').trim();
+        if (!boardLabel || seenBoardLabels.has(boardLabel.toLowerCase())) {
+            return;
+        }
+
+        seenBoardLabels.add(boardLabel.toLowerCase());
+        const rankNumber = Number.isFinite(Number(board.rank)) ? Number(board.rank).toFixed(1).replace('.0', '') : board.rank;
+        appendRankPill(overallRow, boardLabel, rankNumber, board.is_primary ? 'primary' : '');
+    });
+
+    if (overallRow.children.length) {
+        container.appendChild(overallRow);
+    }
+    if (positionalRow.children.length) {
+        container.appendChild(positionalRow);
+    }
+
+    if (!container.children.length) {
+        const empty = document.createElement('p');
+        empty.className = 'search-empty';
+        empty.textContent = 'No board-specific ranks available yet.';
+        container.appendChild(empty);
+    }
+}
+
 // Toggle scout status
 async function toggleScoutStatus() {
     if (!currentPlayer) return;
@@ -1939,6 +2668,155 @@ async function toggleScoutStatus() {
         console.error('Error updating scout status:', error);
         alert('Error updating scout status. Please try again.');
     }
+}
+
+async function savePlayerProfile() {
+    if (!currentPlayer) return;
+
+    const statsObject = collectProfileStatsObject();
+
+    const payload = {
+        position: document.getElementById('edit-position-input').value.trim(),
+        school: document.getElementById('edit-school-input').value.trim(),
+        height: document.getElementById('edit-height-input').value.trim(),
+        weight: document.getElementById('edit-weight-input').value.trim(),
+        jersey_number: document.getElementById('edit-jersey-input').value.trim(),
+        player_url: document.getElementById('edit-url-input').value.trim(),
+        stats_json: JSON.stringify(statsObject)
+    };
+
+    const btn = document.getElementById('save-profile-btn');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+
+    try {
+        const response = await fetch(`/api/player/${currentPlayer.id}/profile`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            const errorText = result.error || 'Could not save profile info.';
+            showToast('Save Failed', errorText, 'error', 7000);
+            return;
+        }
+
+        await loadCurrentPlayerBySource(currentPlayer.id);
+    closeEditProfileDialog();
+        showToast('Profile Saved', 'Player profile fields were updated.', 'success', 5000);
+        loadPositions();
+        loadSchools();
+    } catch (error) {
+        console.error('Error saving profile info:', error);
+        showToast('Save Failed', 'Error saving profile info.', 'error', 7000);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+async function loadCurrentPlayerBySource(playerId) {
+    const response = await fetch(`/api/player/${playerId}`);
+    const player = await response.json();
+
+    if (!response.ok || player.error) {
+        return;
+    }
+
+    currentPlayer = player;
+    displayPlayerDetails(player);
+}
+
+function openEditProfileDialog() {
+    if (!currentPlayer) {
+        showToast('No Player Selected', 'Load a player report first, then edit profile details.', 'error', 5000);
+        return;
+    }
+
+    document.getElementById('edit-position-input').value = currentPlayer.position || '';
+    document.getElementById('edit-school-input').value = currentPlayer.school || '';
+    document.getElementById('edit-height-input').value = currentPlayer.height || '';
+    document.getElementById('edit-weight-input').value = currentPlayer.weight || '';
+    document.getElementById('edit-jersey-input').value = currentPlayer.jersey_number || '';
+    document.getElementById('edit-url-input').value = currentPlayer.player_url || '';
+
+    renderProfileStatsBuilder(currentPlayer.stats && typeof currentPlayer.stats === 'object' ? currentPlayer.stats : {});
+    document.getElementById('edit-profile-dialog').classList.remove('hidden');
+}
+
+function closeEditProfileDialog() {
+    document.getElementById('edit-profile-dialog').classList.add('hidden');
+}
+
+function renderProfileStatsBuilder(statsObject) {
+    const container = document.getElementById('edit-stats-builder');
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = '';
+    const entries = Object.entries(statsObject || {});
+
+    if (!entries.length) {
+        addProfileStatRow('', '');
+        return;
+    }
+
+    entries.forEach(([statKey, statValue]) => {
+        addProfileStatRow(statKey, statValue);
+    });
+}
+
+function addProfileStatRow(statKey = '', statValue = '') {
+    const container = document.getElementById('edit-stats-builder');
+    if (!container) {
+        return;
+    }
+
+    const row = document.createElement('div');
+    row.className = 'profile-stat-row';
+
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.className = 'search-input profile-stat-key';
+    keyInput.placeholder = 'Stat name (e.g. forty_time)';
+    keyInput.value = statKey || '';
+
+    const valueInput = document.createElement('input');
+    valueInput.type = 'text';
+    valueInput.className = 'search-input profile-stat-value';
+    valueInput.placeholder = 'Stat value (e.g. 4.39)';
+    valueInput.value = statValue == null ? '' : String(statValue);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'mini-btn remove profile-stat-remove';
+    removeBtn.textContent = 'Remove';
+    removeBtn.addEventListener('click', () => {
+        row.remove();
+        if (!container.children.length) {
+            addProfileStatRow('', '');
+        }
+    });
+
+    row.appendChild(keyInput);
+    row.appendChild(valueInput);
+    row.appendChild(removeBtn);
+    container.appendChild(row);
+}
+
+function collectProfileStatsObject() {
+    const stats = {};
+    document.querySelectorAll('#edit-stats-builder .profile-stat-row').forEach(row => {
+        const key = row.querySelector('.profile-stat-key')?.value.trim() || '';
+        const value = row.querySelector('.profile-stat-value')?.value.trim() || '';
+        if (key) {
+            stats[key] = value;
+        }
+    });
+    return stats;
 }
 
 // Save notes

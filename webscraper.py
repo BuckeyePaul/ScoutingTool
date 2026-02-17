@@ -211,7 +211,6 @@ if __name__ == "__main__":
             print("\nCalculating positional ranks...")
             db.calculate_positional_ranks()
             
-            print("\nYou can now run the scout application with: python app.py")
         except Exception as e:
             print(f"Warning: Could not initialize database: {e}")
             print("You can manually import data later by running:")

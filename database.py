@@ -1,5 +1,6 @@
 ﻿import sqlite3
 import json
+import re
 from datetime import datetime
 
 class ScoutDatabase:
@@ -46,6 +47,53 @@ class ScoutDatabase:
                         cursor.execute('ALTER TABLE players ADD COLUMN games_watched TEXT')
                 if 'grade_secondary' not in existing_columns:
                         cursor.execute('ALTER TABLE players ADD COLUMN grade_secondary TEXT')
+                if 'tankathon_rank' not in existing_columns:
+                        cursor.execute('ALTER TABLE players ADD COLUMN tankathon_rank INTEGER')
+                if 'weighted_avg_rank' not in existing_columns:
+                        cursor.execute('ALTER TABLE players ADD COLUMN weighted_avg_rank REAL')
+
+                cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS rank_boards (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                board_key TEXT NOT NULL UNIQUE,
+                                board_name TEXT NOT NULL,
+                                source_type TEXT NOT NULL DEFAULT 'imported',
+                                weight REAL NOT NULL DEFAULT 1.0,
+                                is_primary INTEGER NOT NULL DEFAULT 0,
+                                created_at TEXT
+                        )
+                ''')
+
+                cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS player_board_ranks (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                player_id INTEGER NOT NULL,
+                                board_id INTEGER NOT NULL,
+                                board_rank REAL NOT NULL,
+                                UNIQUE(player_id, board_id),
+                                FOREIGN KEY(player_id) REFERENCES players(id) ON DELETE CASCADE,
+                                FOREIGN KEY(board_id) REFERENCES rank_boards(id) ON DELETE CASCADE
+                        )
+                ''')
+
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_player_board_ranks_board_id ON player_board_ranks(board_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_player_board_ranks_player_id ON player_board_ranks(player_id)')
+
+                cursor.execute('''
+                        INSERT OR IGNORE INTO rank_boards (board_key, board_name, source_type, weight, is_primary, created_at)
+                        VALUES ('tankathon', 'Tankathon Big Board', 'tankathon', 1.0, 0, ?)
+                ''', (datetime.now().isoformat(),))
+
+                cursor.execute('''
+                        INSERT OR IGNORE INTO rank_boards (board_key, board_name, source_type, weight, is_primary, created_at)
+                        VALUES ('consensus_2026', 'Consensus Big Board 2026', 'consensus', 1.0, 1, ?)
+                ''', (datetime.now().isoformat(),))
+
+                cursor.execute('''
+                        UPDATE rank_boards
+                        SET is_primary = CASE WHEN board_key = 'consensus_2026' THEN 1 ELSE 0 END
+                        WHERE board_key IN ('consensus_2026', 'tankathon')
+                ''')
 
                 cursor.execute('''
                         CREATE TABLE IF NOT EXISTS big_boards (
@@ -70,6 +118,180 @@ class ScoutDatabase:
 
                 conn.commit()
                 conn.close()
+
+        @staticmethod
+        def _slugify_board_key(name):
+                cleaned = re.sub(r'[^a-z0-9]+', '_', (name or '').lower()).strip('_')
+                if not cleaned:
+                        cleaned = 'imported_board'
+                return cleaned[:70]
+
+        def _get_or_create_rank_board(self, cursor, board_key, board_name, source_type='imported', weight=1.0, is_primary=0):
+                cursor.execute('SELECT id FROM rank_boards WHERE board_key = ?', (board_key,))
+                existing = cursor.fetchone()
+                if existing:
+                        cursor.execute('''
+                                UPDATE rank_boards
+                                SET board_name = ?, source_type = ?, weight = ?, is_primary = ?
+                                WHERE board_key = ?
+                        ''', (board_name, source_type, weight, is_primary, board_key))
+                        return existing[0]
+
+                cursor.execute('''
+                        INSERT INTO rank_boards (board_key, board_name, source_type, weight, is_primary, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                ''', (board_key, board_name, source_type, weight, is_primary, datetime.now().isoformat()))
+                return cursor.lastrowid
+
+        def _ensure_player_exists_by_name(self, cursor, player_name):
+                cursor.execute('SELECT id FROM players WHERE name = ?', (player_name,))
+                existing = cursor.fetchone()
+                if existing:
+                        return existing[0]
+
+                cursor.execute('INSERT INTO players (name) VALUES (?)', (player_name,))
+                return cursor.lastrowid
+
+        def _upsert_board_rank_entries(self, cursor, board_key, board_name, entries, source_type='imported', weight=1.0, is_primary=0):
+                board_id = self._get_or_create_rank_board(
+                        cursor,
+                        board_key=board_key,
+                        board_name=board_name,
+                        source_type=source_type,
+                        weight=weight,
+                        is_primary=is_primary
+                )
+
+                cursor.execute('DELETE FROM player_board_ranks WHERE board_id = ?', (board_id,))
+
+                cursor.execute('SELECT id, name FROM players')
+                existing_players = cursor.fetchall()
+                normalized_lookup = {}
+                for existing_player_id, existing_name in existing_players:
+                        normalized_name = self._normalize_player_name(existing_name)
+                        if normalized_name and normalized_name not in normalized_lookup:
+                                normalized_lookup[normalized_name] = existing_player_id
+
+                matched_count = 0
+                new_player_count = 0
+                seen_player_ids = set()
+
+                for entry in entries:
+                        player_name = (entry.get('name') or '').strip()
+                        rank_value = entry.get('rank')
+                        if not player_name or rank_value is None:
+                                continue
+
+                        cursor.execute('SELECT id FROM players WHERE name = ?', (player_name,))
+                        existing_player = cursor.fetchone()
+                        if existing_player:
+                                player_id = existing_player[0]
+                        else:
+                                normalized_name = self._normalize_player_name(player_name)
+                                player_id = normalized_lookup.get(normalized_name)
+                                if not player_id:
+                                        player_id = self._ensure_player_exists_by_name(cursor, player_name)
+                                        new_player_count += 1
+                                        if normalized_name:
+                                                normalized_lookup[normalized_name] = player_id
+
+                        if player_id in seen_player_ids:
+                                continue
+                        seen_player_ids.add(player_id)
+
+                        cursor.execute('''
+                                INSERT INTO player_board_ranks (player_id, board_id, board_rank)
+                                VALUES (?, ?, ?)
+                        ''', (player_id, board_id, float(rank_value)))
+                        matched_count += 1
+
+                return {
+                        'board_id': board_id,
+                        'matched_count': matched_count,
+                        'new_player_count': new_player_count
+                }
+
+        def recalculate_default_rankings(self):
+                """Recalculate displayed rankings using primary board first, then weighted average, then Tankathon fallback."""
+                conn = self.get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                        SELECT id, board_key, weight, is_primary
+                        FROM rank_boards
+                ''')
+                board_rows = cursor.fetchall()
+                board_key_by_id = {row[0]: row[1] for row in board_rows}
+                board_weight_by_id = {row[0]: float(row[2] or 0.0) for row in board_rows}
+                primary_board_id = next((row[0] for row in board_rows if row[3] == 1), None)
+
+                cursor.execute('''
+                        SELECT player_id, board_id, board_rank
+                        FROM player_board_ranks
+                ''')
+                rank_rows = cursor.fetchall()
+
+                ranks_by_player = {}
+                weighted_sum = {}
+                weighted_total = {}
+
+                for player_id, board_id, board_rank in rank_rows:
+                        ranks_by_player.setdefault(player_id, {})[board_id] = float(board_rank)
+                        weight = board_weight_by_id.get(board_id, 0.0)
+                        if weight > 0:
+                                weighted_sum[player_id] = weighted_sum.get(player_id, 0.0) + (float(board_rank) * weight)
+                                weighted_total[player_id] = weighted_total.get(player_id, 0.0) + weight
+
+                weighted_avg_by_player = {
+                        player_id: (weighted_sum[player_id] / weighted_total[player_id])
+                        for player_id in weighted_sum
+                        if weighted_total.get(player_id, 0) > 0
+                }
+
+                cursor.execute('''
+                        SELECT id, name, tankathon_rank
+                        FROM players
+                ''')
+                players = cursor.fetchall()
+
+                player_sort_rows = []
+                for player_id, name, tankathon_rank in players:
+                        per_player_ranks = ranks_by_player.get(player_id, {})
+
+                        primary_rank = None
+                        if primary_board_id is not None and primary_board_id in per_player_ranks:
+                                primary_rank = per_player_ranks.get(primary_board_id)
+
+                        weighted_rank = weighted_avg_by_player.get(player_id)
+                        tankathon_fallback = float(tankathon_rank) if tankathon_rank is not None else None
+
+                        effective_rank = primary_rank
+                        if effective_rank is None:
+                                effective_rank = weighted_rank
+                        if effective_rank is None:
+                                effective_rank = tankathon_fallback
+
+                        if effective_rank is None:
+                                sort_rank = 999999.0
+                        else:
+                                sort_rank = float(effective_rank)
+
+                        player_sort_rows.append((player_id, name or '', sort_rank, weighted_rank))
+
+                player_sort_rows.sort(key=lambda row: (row[2], row[1]))
+
+                for index, (player_id, _, _, weighted_rank) in enumerate(player_sort_rows, start=1):
+                        cursor.execute('''
+                                UPDATE players
+                                SET rank = ?, weighted_avg_rank = ?
+                                WHERE id = ?
+                        ''', (index, weighted_rank, player_id))
+
+                conn.commit()
+                conn.close()
+
+                self.calculate_positional_ranks()
+                return len(player_sort_rows)
         
         def import_players_from_json (self, json_file='nfl_big_board.json'):
                 """Import players from the JSON generated from Tankathon Webscraper"""
@@ -81,6 +303,7 @@ class ScoutDatabase:
                         cursor = conn.cursor()
 
                         imported = 0
+                        board_entries = []
                         for player in players:
                                 try:
                                         #Get basic info
@@ -103,10 +326,10 @@ class ScoutDatabase:
 
                                         cursor.execute('''
                                                 INSERT INTO players
-                                                (rank, name, position, positional_rank, school, height, weight, jersey_number, player_url, stats)
-                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                (rank, tankathon_rank, name, position, positional_rank, school, height, weight, jersey_number, player_url, stats)
+                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                                 ON CONFLICT(name) DO UPDATE SET
-                                                        rank = excluded.rank,
+                                                        tankathon_rank = excluded.tankathon_rank,
                                                         position = excluded.position,
                                                         positional_rank = excluded.positional_rank,
                                                         school = excluded.school,
@@ -115,7 +338,9 @@ class ScoutDatabase:
                                                         jersey_number = excluded.jersey_number,
                                                         player_url = excluded.player_url,
                                                         stats = excluded.stats
-                                        ''', (rank, name, position, positional_rank, school, height, weight, jersey_number, player_url, stats_json))
+                                        ''', (rank, rank, name, position, positional_rank, school, height, weight, jersey_number, player_url, stats_json))
+
+                                        board_entries.append({'name': name, 'rank': rank})
 
                                         imported += 1
 
@@ -123,8 +348,19 @@ class ScoutDatabase:
                                         print(f"Error importing player {player.get('name')}: {e}")
                                         return 0
 
+                        self._upsert_board_rank_entries(
+                                cursor,
+                                board_key='tankathon',
+                                board_name='Tankathon Big Board',
+                                entries=board_entries,
+                                source_type='tankathon',
+                                weight=1.0,
+                                is_primary=0
+                        )
+
                         conn.commit()
                         conn.close()
+                        self.recalculate_default_rankings()
                         print(f"imported {imported} new players")
                         return imported
                 
@@ -267,6 +503,31 @@ class ScoutDatabase:
                         except:
                                 player['stats'] = {}
 
+                cursor.execute('''
+                        SELECT e.rank_order
+                        FROM big_board_entries e
+                        JOIN big_boards b ON b.id = e.board_id
+                        WHERE e.player_id = ?
+                          AND b.board_type = 'overall'
+                          AND b.position IS NULL
+                        LIMIT 1
+                ''', (player_id,))
+                personal_rank_row = cursor.fetchone()
+                player['personal_big_board_rank'] = personal_rank_row[0] if personal_rank_row else None
+
+                cursor.execute('''
+                        SELECT MIN(e.rank_order)
+                        FROM big_board_entries e
+                        JOIN big_boards b ON b.id = e.board_id
+                        WHERE e.player_id = ?
+                          AND b.board_type = 'position'
+                ''', (player_id,))
+                personal_pos_rank_row = cursor.fetchone()
+                player['personal_pos_rank'] = personal_pos_rank_row[0] if personal_pos_rank_row and personal_pos_rank_row[0] is not None else None
+
+                player['board_ranks'] = self.get_player_board_ranks(player_id, conn=conn)
+                player['weighted_average_rank'] = player.get('weighted_avg_rank')
+
                 conn.close()
                 return player
 
@@ -347,6 +608,143 @@ class ScoutDatabase:
                 conn.commit()
                 conn.close()
 
+        def update_player_profile(self, player_id, profile_data):
+                """Update editable player profile fields from scout report modal."""
+                conn = self.get_connection()
+                cursor = conn.cursor()
+
+                stats_text = (profile_data.get('stats_json') or '').strip()
+                parsed_stats = {}
+                if stats_text:
+                        parsed_stats = json.loads(stats_text)
+                        if not isinstance(parsed_stats, dict):
+                                raise ValueError('Stats JSON must be an object (key/value pairs).')
+
+                cursor.execute('''
+                        UPDATE players
+                        SET
+                                position = ?,
+                                school = ?,
+                                height = ?,
+                                weight = ?,
+                                jersey_number = ?,
+                                player_url = ?,
+                                stats = ?
+                        WHERE id = ?
+                ''', (
+                        (profile_data.get('position') or '').strip(),
+                        (profile_data.get('school') or '').strip(),
+                        (profile_data.get('height') or '').strip(),
+                        (profile_data.get('weight') or '').strip(),
+                        (profile_data.get('jersey_number') or '').strip(),
+                        (profile_data.get('player_url') or '').strip(),
+                        json.dumps(parsed_stats),
+                        player_id
+                ))
+
+                conn.commit()
+                conn.close()
+
+        def get_rank_boards_config(self):
+                conn = self.get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                        SELECT b.id, b.board_key, b.board_name, b.source_type, b.weight, b.is_primary,
+                               COUNT(pbr.id) AS player_count
+                        FROM rank_boards b
+                        LEFT JOIN player_board_ranks pbr ON pbr.board_id = b.id
+                        GROUP BY b.id, b.board_key, b.board_name, b.source_type, b.weight, b.is_primary
+                        ORDER BY b.is_primary DESC, b.board_name ASC
+                ''')
+
+                rows = cursor.fetchall()
+                conn.close()
+
+                return [
+                        {
+                                'id': row[0],
+                                'board_key': row[1],
+                                'board_name': row[2],
+                                'source_type': row[3],
+                                'weight': row[4],
+                                'is_primary': bool(row[5]),
+                                'player_count': row[6]
+                        }
+                        for row in rows
+                ]
+
+        def update_rank_board_weights(self, board_updates):
+                if not isinstance(board_updates, list):
+                        return {'success': False, 'error': 'board_updates must be a list.'}
+
+                conn = self.get_connection()
+                cursor = conn.cursor()
+
+                target_primary_key = None
+                for update in board_updates:
+                        board_key = (update.get('board_key') or '').strip()
+                        if not board_key:
+                                continue
+
+                        if update.get('is_primary'):
+                                target_primary_key = board_key
+
+                        raw_weight = update.get('weight', 1)
+                        try:
+                                weight = float(raw_weight)
+                        except (TypeError, ValueError):
+                                weight = 1.0
+
+                        if weight < 0:
+                                weight = 0.0
+
+                        cursor.execute('''
+                                UPDATE rank_boards
+                                SET weight = ?
+                                WHERE board_key = ?
+                        ''', (weight, board_key))
+
+                if target_primary_key:
+                        cursor.execute('UPDATE rank_boards SET is_primary = 0')
+                        cursor.execute('UPDATE rank_boards SET is_primary = 1 WHERE board_key = ?', (target_primary_key,))
+
+                conn.commit()
+                conn.close()
+
+                self.recalculate_default_rankings()
+                return {'success': True}
+
+        def get_player_board_ranks(self, player_id, conn=None):
+                owns_conn = conn is None
+                if owns_conn:
+                        conn = self.get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                        SELECT b.board_key, b.board_name, b.source_type, b.weight, b.is_primary, pbr.board_rank
+                        FROM player_board_ranks pbr
+                        JOIN rank_boards b ON b.id = pbr.board_id
+                        WHERE pbr.player_id = ?
+                        ORDER BY b.is_primary DESC, pbr.board_rank ASC, b.board_name ASC
+                ''', (player_id,))
+                rows = cursor.fetchall()
+
+                if owns_conn:
+                        conn.close()
+
+                return [
+                        {
+                                'board_key': row[0],
+                                'board_name': row[1],
+                                'source_type': row[2],
+                                'weight': row[3],
+                                'is_primary': bool(row[4]),
+                                'rank': row[5]
+                        }
+                        for row in rows
+                ]
+
         def get_all_positions(self):
                 """Get list of all unique positions"""
                 conn = self.get_connection()
@@ -405,11 +803,12 @@ class ScoutDatabase:
                 try:
                         cursor.execute('''
                                 INSERT INTO players (
-                                        rank, name, position, school, height, weight,
+                                        rank, tankathon_rank, name, position, school, height, weight,
                                         jersey_number, player_url, notes, grade, scouted, scout_date
                                 )
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
+                                player_data.get('rank'),
                                 player_data.get('rank'),
                                 player_data.get('name'),
                                 player_data.get('position'),
@@ -426,6 +825,7 @@ class ScoutDatabase:
                         conn.commit()
                         player_id = cursor.lastrowid
                         conn.close()
+                        self.recalculate_default_rankings()
                         return {'success': True, 'player_id': player_id}
                 except sqlite3.IntegrityError as e:
                         conn.close()
@@ -527,9 +927,11 @@ class ScoutDatabase:
                 board_id = self._get_or_create_big_board_id(cursor, board_type, position)
 
                 cursor.execute('''
-                        SELECT e.id AS entry_id, e.rank_order, p.*
+                        SELECT e.id AS entry_id, e.rank_order, p.*, pbr.board_rank AS consensus_rank
                         FROM big_board_entries e
                         JOIN players p ON p.id = e.player_id
+                        LEFT JOIN rank_boards rb ON rb.board_key = 'consensus_2026'
+                        LEFT JOIN player_board_ranks pbr ON pbr.player_id = p.id AND pbr.board_id = rb.id
                         WHERE e.board_id = ?
                         ORDER BY e.rank_order ASC
                 ''', (board_id,))
@@ -537,6 +939,33 @@ class ScoutDatabase:
 
                 columns = [description[0] for description in cursor.description]
                 board_entries = [dict(zip(columns, row)) for row in rows]
+
+                cursor.execute('''
+                        SELECT p.name, pbr.board_rank
+                        FROM player_board_ranks pbr
+                        JOIN rank_boards rb ON rb.id = pbr.board_id
+                        JOIN players p ON p.id = pbr.player_id
+                        WHERE rb.board_key = 'consensus_2026'
+                ''')
+                consensus_rows = cursor.fetchall()
+                consensus_by_normalized_name = {}
+                for consensus_name, consensus_rank in consensus_rows:
+                        normalized_name = self._normalize_player_name(consensus_name)
+                        if not normalized_name:
+                                continue
+
+                        rank_value = float(consensus_rank)
+                        existing_rank = consensus_by_normalized_name.get(normalized_name)
+                        if existing_rank is None or rank_value < existing_rank:
+                                consensus_by_normalized_name[normalized_name] = rank_value
+
+                for player in board_entries:
+                        if player.get('consensus_rank') is not None:
+                                continue
+                        normalized_name = self._normalize_player_name(player.get('name'))
+                        if normalized_name in consensus_by_normalized_name:
+                                player['consensus_rank'] = consensus_by_normalized_name[normalized_name]
+
                 conn.close()
                 return board_entries
 
@@ -668,3 +1097,531 @@ class ScoutDatabase:
                 conn.commit()
                 conn.close()
                 return {'success': True}
+
+        @staticmethod
+        def _normalize_player_name(name):
+                if not name:
+                        return ''
+
+                normalized = name.lower().strip()
+                normalized = normalized.replace('.', ' ')
+                normalized = normalized.replace(',', ' ')
+                normalized = re.sub(r'\b(jr|sr|ii|iii|iv|v)\b', '', normalized)
+                normalized = re.sub(r'[^a-z0-9\s-]', '', normalized)
+                normalized = re.sub(r'\s+', ' ', normalized)
+                return normalized.strip()
+
+        @staticmethod
+        def _parse_big_board_text(board_text):
+                """Parse text lines into ordered (rank, name) entries."""
+                entries = []
+                if not board_text:
+                        return entries
+
+                lines = board_text.splitlines()
+                for line in lines:
+                        raw = (line or '').strip()
+                        if not raw:
+                                continue
+
+                        match = re.match(r'^\s*(\d+)\s*[\.)\-:]?\s*(.+?)\s*$', raw)
+                        if match:
+                                rank_value = int(match.group(1))
+                                name = match.group(2).strip()
+                        else:
+                                rank_value = len(entries) + 1
+                                name = raw
+
+                        if not name:
+                                continue
+
+                        entries.append({'rank': rank_value, 'name': name})
+
+                return entries
+
+        def import_external_big_boards(self, boards, weighting_mode='equal'):
+                """Import multiple external boards and store each board independently."""
+                if not isinstance(boards, list) or len(boards) == 0:
+                        return {'success': False, 'error': 'At least one board is required.'}
+
+                conn = self.get_connection()
+                cursor = conn.cursor()
+
+                board_summaries = []
+                unmatched_names = set()
+                total_new_players = 0
+
+                for board in boards:
+                        board_name = (board.get('name') or 'Unnamed Board').strip() if isinstance(board, dict) else 'Unnamed Board'
+                        board_text = board.get('text', '') if isinstance(board, dict) else ''
+                        board_key = self._slugify_board_key(board_name)
+                        if not board_key.startswith('imported_'):
+                                board_key = f'imported_{board_key}'
+
+                        parsed_entries = self._parse_big_board_text(board_text)
+                        if not parsed_entries:
+                                continue
+
+                        if weighting_mode == 'weighted':
+                                raw_weight = board.get('weight', 1) if isinstance(board, dict) else 1
+                                try:
+                                        board_weight = float(raw_weight)
+                                except (TypeError, ValueError):
+                                        board_weight = 1.0
+                        else:
+                                board_weight = 1.0
+
+                        if board_weight <= 0:
+                                board_weight = 1.0
+
+                        normalized_entries = []
+                        for entry in parsed_entries:
+                                entry_name = (entry.get('name') or '').strip()
+                                if not entry_name:
+                                        continue
+                                normalized_entries.append({'name': entry_name, 'rank': entry.get('rank')})
+
+                        upsert_result = self._upsert_board_rank_entries(
+                                cursor,
+                                board_key=board_key,
+                                board_name=board_name,
+                                entries=normalized_entries,
+                                source_type='imported',
+                                weight=board_weight,
+                                is_primary=0
+                        )
+                        total_new_players += upsert_result['new_player_count']
+
+                        board_summaries.append({
+                                'name': board_name,
+                                'board_key': board_key,
+                                'entries': len(parsed_entries),
+                                'matched': upsert_result['matched_count'],
+                                'weight': board_weight
+                        })
+
+                if not board_summaries:
+                        conn.close()
+                        return {'success': False, 'error': 'No valid board entries were found in uploaded files.'}
+
+                conn.commit()
+                conn.close()
+                player_count = self.recalculate_default_rankings()
+
+                return {
+                        'success': True,
+                        'mode': weighting_mode,
+                        'boards_processed': len(board_summaries),
+                        'boards': board_summaries,
+                        'players_ranked_from_import': player_count,
+                        'players_total_ranked': player_count,
+                        'new_players_added': total_new_players,
+                        'positional_rank_updates': player_count,
+                        'unmatched_count': len(unmatched_names),
+                        'unmatched_examples': sorted(list(unmatched_names))[:10]
+                }
+
+        def import_consensus_board(self, players, board_key='consensus_2026', board_name='Consensus Big Board 2026'):
+                """Import consensus board ranks, creating missing players without overwriting Tankathon detail fields."""
+                if not isinstance(players, list) or not players:
+                        return {'success': False, 'error': 'No consensus players provided.'}
+
+                conn = self.get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute('SELECT id, name, position, school FROM players')
+                existing_players = cursor.fetchall()
+                normalized_lookup = {}
+                for existing_id, existing_name, _, _ in existing_players:
+                        normalized_name = self._normalize_player_name(existing_name)
+                        if normalized_name and normalized_name not in normalized_lookup:
+                                normalized_lookup[normalized_name] = (existing_id, existing_name)
+
+                normalized_entries = []
+                for player in players:
+                        name = (player.get('name') or '').strip()
+                        rank = player.get('rank')
+                        if not name or rank is None:
+                                continue
+
+                        position = (player.get('position') or '').strip()
+                        school = (player.get('school') or '').strip()
+
+                        cursor.execute('SELECT id, name FROM players WHERE name = ?', (name,))
+                        exact_match = cursor.fetchone()
+                        canonical_name = name
+
+                        if exact_match:
+                                player_id = exact_match[0]
+                                canonical_name = exact_match[1]
+                        else:
+                                normalized_name = self._normalize_player_name(name)
+                                normalized_match = normalized_lookup.get(normalized_name)
+                                if normalized_match:
+                                        player_id = normalized_match[0]
+                                        canonical_name = normalized_match[1]
+                                else:
+                                        cursor.execute('INSERT INTO players (name, position, school) VALUES (?, ?, ?)', (name, position, school))
+                                        player_id = cursor.lastrowid
+                                        canonical_name = name
+                                        if normalized_name:
+                                                normalized_lookup[normalized_name] = (player_id, canonical_name)
+
+                        cursor.execute('''
+                                UPDATE players
+                                SET position = CASE
+                                        WHEN (position IS NULL OR position = '') AND ? != ''
+                                        THEN ? ELSE position
+                                END,
+                                school = CASE
+                                        WHEN (school IS NULL OR school = '') AND ? != ''
+                                        THEN ? ELSE school
+                                END
+                                WHERE id = ?
+                        ''', (position, position, school, school, player_id))
+
+                        normalized_entries.append({'name': canonical_name, 'rank': rank})
+
+                if not normalized_entries:
+                        conn.close()
+                        return {'success': False, 'error': 'No valid consensus entries found.'}
+
+                cursor.execute('UPDATE rank_boards SET is_primary = 0')
+                upsert_result = self._upsert_board_rank_entries(
+                        cursor,
+                        board_key=board_key,
+                        board_name=board_name,
+                        entries=normalized_entries,
+                        source_type='consensus',
+                        weight=1.0,
+                        is_primary=1
+                )
+
+                conn.commit()
+                conn.close()
+                ranked_count = self.recalculate_default_rankings()
+
+                return {
+                        'success': True,
+                        'board_key': board_key,
+                        'board_name': board_name,
+                        'entries_imported': upsert_result['matched_count'],
+                        'new_players_added': upsert_result['new_player_count'],
+                        'players_total_ranked': ranked_count
+                }
+
+        def import_nflmock_url_board(self, players, board_name):
+                """Import a non-consensus NFLMockDraftDatabase board by URL into selectable rank boards."""
+                if not isinstance(players, list) or not players:
+                        return {'success': False, 'error': 'No players provided from source board.'}
+
+                normalized_board_name = (board_name or '').strip() or 'Imported NFLMockDraftDatabase Board'
+                board_key = self._slugify_board_key(normalized_board_name)
+
+                conn = self.get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute('SELECT id, name, position, school FROM players')
+                existing_players = cursor.fetchall()
+                normalized_lookup = {}
+                for existing_id, existing_name, _, _ in existing_players:
+                        normalized_name = self._normalize_player_name(existing_name)
+                        if normalized_name and normalized_name not in normalized_lookup:
+                                normalized_lookup[normalized_name] = (existing_id, existing_name)
+
+                normalized_entries = []
+                for player in players:
+                        name = (player.get('name') or '').strip()
+                        rank = player.get('rank')
+                        if not name or rank is None:
+                                continue
+
+                        position = (player.get('position') or '').strip()
+                        school = (player.get('school') or '').strip()
+
+                        cursor.execute('SELECT id, name FROM players WHERE name = ?', (name,))
+                        exact_match = cursor.fetchone()
+                        canonical_name = name
+
+                        if exact_match:
+                                player_id = exact_match[0]
+                                canonical_name = exact_match[1]
+                        else:
+                                normalized_name = self._normalize_player_name(name)
+                                normalized_match = normalized_lookup.get(normalized_name)
+                                if normalized_match:
+                                        player_id = normalized_match[0]
+                                        canonical_name = normalized_match[1]
+                                else:
+                                        cursor.execute('INSERT INTO players (name, position, school) VALUES (?, ?, ?)', (name, position, school))
+                                        player_id = cursor.lastrowid
+                                        canonical_name = name
+                                        if normalized_name:
+                                                normalized_lookup[normalized_name] = (player_id, canonical_name)
+
+                        cursor.execute('''
+                                UPDATE players
+                                SET position = CASE
+                                        WHEN (position IS NULL OR position = '') AND ? != ''
+                                        THEN ? ELSE position
+                                END,
+                                school = CASE
+                                        WHEN (school IS NULL OR school = '') AND ? != ''
+                                        THEN ? ELSE school
+                                END
+                                WHERE id = ?
+                        ''', (position, position, school, school, player_id))
+
+                        normalized_entries.append({'name': canonical_name, 'rank': rank})
+
+                if not normalized_entries:
+                        conn.close()
+                        return {'success': False, 'error': 'No valid entries found in source board.'}
+
+                upsert_result = self._upsert_board_rank_entries(
+                        cursor,
+                        board_key=board_key,
+                        board_name=normalized_board_name,
+                        entries=normalized_entries,
+                        source_type='imported',
+                        weight=1.0,
+                        is_primary=0
+                )
+
+                conn.commit()
+                conn.close()
+                ranked_count = self.recalculate_default_rankings()
+
+                return {
+                        'success': True,
+                        'board_key': board_key,
+                        'board_name': normalized_board_name,
+                        'entries_imported': upsert_result['matched_count'],
+                        'new_players_added': upsert_result['new_player_count'],
+                        'players_total_ranked': ranked_count
+                }
+
+        def merge_player_name_duplicates(self):
+                """Merge duplicate players that normalize to the same name and rewire references."""
+                conn = self.get_connection()
+                cursor = conn.cursor()
+
+                def value_score(player_row):
+                        score = 0
+                        if player_row.get('scouted'):
+                                score += 5
+                        for key in ['position', 'school', 'height', 'weight', 'player_url', 'stats', 'notes', 'games_watched', 'grade', 'grade_secondary']:
+                                if (player_row.get(key) or '').strip():
+                                        score += 1
+                        return score
+
+                def choose_rank_value(current_value, incoming_value):
+                        current_num = None
+                        incoming_num = None
+                        try:
+                                current_num = float(current_value) if current_value is not None else None
+                        except Exception:
+                                current_num = None
+                        try:
+                                incoming_num = float(incoming_value) if incoming_value is not None else None
+                        except Exception:
+                                incoming_num = None
+
+                        if incoming_num is None:
+                                return current_value
+                        if current_num is None:
+                                return incoming_value
+                        return incoming_value if incoming_num < current_num else current_value
+
+                try:
+                        cursor.execute('SELECT * FROM players')
+                        columns = [description[0] for description in cursor.description]
+                        players = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+                        groups = {}
+                        for player in players:
+                                normalized_name = self._normalize_player_name(player.get('name'))
+                                if not normalized_name:
+                                        continue
+                                groups.setdefault(normalized_name, []).append(player)
+
+                        duplicate_groups = [group for group in groups.values() if len(group) > 1]
+                        if not duplicate_groups:
+                                conn.close()
+                                return {
+                                        'success': True,
+                                        'groups_merged': 0,
+                                        'players_removed': 0,
+                                        'output': 'No duplicate player name variants found.'
+                                }
+
+                        merged_groups = 0
+                        players_removed = 0
+
+                        text_fields = ['position', 'positional_rank', 'school', 'height', 'weight', 'jersey_number', 'player_url', 'stats', 'notes', 'games_watched', 'grade', 'grade_secondary', 'scout_date']
+
+                        for group in duplicate_groups:
+                                canonical = sorted(
+                                        group,
+                                        key=lambda row: (
+                                                -value_score(row),
+                                                0 if row.get('name') == self._normalize_player_name(row.get('name')) else 1,
+                                                row.get('id')
+                                        )
+                                )[0]
+                                canonical_id = canonical['id']
+
+                                for duplicate in group:
+                                        duplicate_id = duplicate['id']
+                                        if duplicate_id == canonical_id:
+                                                continue
+
+                                        for field in text_fields:
+                                                canonical_value = (canonical.get(field) or '').strip()
+                                                duplicate_value = (duplicate.get(field) or '').strip()
+                                                if not canonical_value and duplicate_value:
+                                                        canonical[field] = duplicate_value
+
+                                        canonical['rank'] = choose_rank_value(canonical.get('rank'), duplicate.get('rank'))
+                                        canonical['tankathon_rank'] = choose_rank_value(canonical.get('tankathon_rank'), duplicate.get('tankathon_rank'))
+                                        canonical['weighted_avg_rank'] = choose_rank_value(canonical.get('weighted_avg_rank'), duplicate.get('weighted_avg_rank'))
+                                        canonical['scouted'] = 1 if canonical.get('scouted') or duplicate.get('scouted') else 0
+
+                                        cursor.execute('SELECT board_id, rank_order FROM big_board_entries WHERE player_id = ?', (duplicate_id,))
+                                        duplicate_board_entries = cursor.fetchall()
+                                        for board_id, rank_order in duplicate_board_entries:
+                                                cursor.execute(
+                                                        'SELECT id FROM big_board_entries WHERE board_id = ? AND player_id = ?',
+                                                        (board_id, canonical_id)
+                                                )
+                                                existing_entry = cursor.fetchone()
+                                                if existing_entry:
+                                                        cursor.execute('DELETE FROM big_board_entries WHERE board_id = ? AND player_id = ?', (board_id, duplicate_id))
+                                                else:
+                                                        cursor.execute(
+                                                                'UPDATE big_board_entries SET player_id = ? WHERE board_id = ? AND player_id = ?',
+                                                                (canonical_id, board_id, duplicate_id)
+                                                        )
+
+                                        cursor.execute('SELECT board_id, board_rank FROM player_board_ranks WHERE player_id = ?', (duplicate_id,))
+                                        duplicate_board_ranks = cursor.fetchall()
+                                        for board_id, duplicate_board_rank in duplicate_board_ranks:
+                                                cursor.execute(
+                                                        'SELECT id, board_rank FROM player_board_ranks WHERE board_id = ? AND player_id = ?',
+                                                        (board_id, canonical_id)
+                                                )
+                                                existing_rank = cursor.fetchone()
+                                                if existing_rank:
+                                                        existing_rank_id, existing_rank_value = existing_rank
+                                                        merged_rank = min(float(existing_rank_value), float(duplicate_board_rank))
+                                                        cursor.execute(
+                                                                'UPDATE player_board_ranks SET board_rank = ? WHERE id = ?',
+                                                                (merged_rank, existing_rank_id)
+                                                        )
+                                                        cursor.execute(
+                                                                'DELETE FROM player_board_ranks WHERE board_id = ? AND player_id = ?',
+                                                                (board_id, duplicate_id)
+                                                        )
+                                                else:
+                                                        cursor.execute(
+                                                                'UPDATE player_board_ranks SET player_id = ? WHERE board_id = ? AND player_id = ?',
+                                                                (canonical_id, board_id, duplicate_id)
+                                                        )
+
+                                        cursor.execute('DELETE FROM players WHERE id = ?', (duplicate_id,))
+                                        players_removed += 1
+
+                                cursor.execute('''
+                                        UPDATE players
+                                        SET rank = ?,
+                                            position = ?,
+                                            positional_rank = ?,
+                                            school = ?,
+                                            height = ?,
+                                            weight = ?,
+                                            jersey_number = ?,
+                                            player_url = ?,
+                                            stats = ?,
+                                            scouted = ?,
+                                            notes = ?,
+                                            games_watched = ?,
+                                            grade = ?,
+                                            grade_secondary = ?,
+                                            scout_date = ?,
+                                            tankathon_rank = ?,
+                                            weighted_avg_rank = ?
+                                        WHERE id = ?
+                                ''', (
+                                        canonical.get('rank'),
+                                        canonical.get('position'),
+                                        canonical.get('positional_rank'),
+                                        canonical.get('school'),
+                                        canonical.get('height'),
+                                        canonical.get('weight'),
+                                        canonical.get('jersey_number'),
+                                        canonical.get('player_url'),
+                                        canonical.get('stats'),
+                                        canonical.get('scouted'),
+                                        canonical.get('notes'),
+                                        canonical.get('games_watched'),
+                                        canonical.get('grade'),
+                                        canonical.get('grade_secondary'),
+                                        canonical.get('scout_date'),
+                                        canonical.get('tankathon_rank'),
+                                        canonical.get('weighted_avg_rank'),
+                                        canonical_id
+                                ))
+
+                                merged_groups += 1
+
+                        cursor.execute('SELECT id FROM big_boards')
+                        board_ids = [row[0] for row in cursor.fetchall()]
+                        for board_id in board_ids:
+                                cursor.execute(
+                                        'SELECT id FROM big_board_entries WHERE board_id = ? ORDER BY rank_order ASC, id ASC',
+                                        (board_id,)
+                                )
+                                entry_ids = [row[0] for row in cursor.fetchall()]
+                                for index, entry_id in enumerate(entry_ids, start=1):
+                                        cursor.execute('UPDATE big_board_entries SET rank_order = ? WHERE id = ?', (index, entry_id))
+
+                        conn.commit()
+                        conn.close()
+                        ranked_count = self.recalculate_default_rankings()
+
+                        return {
+                                'success': True,
+                                'groups_merged': merged_groups,
+                                'players_removed': players_removed,
+                                'players_total_ranked': ranked_count,
+                                'output': f'Merged {players_removed} duplicate players across {merged_groups} normalized-name groups.'
+                        }
+                except Exception as error:
+                        conn.rollback()
+                        conn.close()
+                        return {'success': False, 'error': str(error)}
+
+        def export_big_board_text(self, scope='overall', position=None):
+                """Export rankings in '#. player name' format."""
+                conn = self.get_connection()
+                cursor = conn.cursor()
+
+                if scope == 'position' and position:
+                        cursor.execute('''
+                                SELECT name
+                                FROM players
+                                WHERE position LIKE ?
+                                ORDER BY rank ASC, name ASC
+                        ''', (f'%{position}%',))
+                else:
+                        cursor.execute('''
+                                SELECT name
+                                FROM players
+                                ORDER BY rank ASC, name ASC
+                        ''')
+
+                names = [row[0] for row in cursor.fetchall() if row and row[0]]
+                conn.close()
+
+                lines = [f"{index}. {name}" for index, name in enumerate(names, start=1)]
+                return '\n'.join(lines)

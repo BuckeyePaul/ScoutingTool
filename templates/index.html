@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@400;500;600;700&family=Rajdhani:wght@400;500;600;700&family=Roboto+Slab:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lato:wght@400;700&family=Montserrat:wght@400;500;600;700&family=Oswald:wght@400;500;600;700&family=Poppins:wght@400;500;600;700&family=Rajdhani:wght@400;500;600;700&family=Roboto+Slab:wght@400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="container">
@@ -85,8 +85,9 @@
 
                 <div class="filter-group">
                     <label for="school-search-input">School:</label>
-                    <input id="school-search-input" class="search-input" type="text" list="schools-list" placeholder="Select or type a school">
-                    <datalist id="schools-list"></datalist>
+                    <select id="school-search-input" class="grade-dropdown">
+                        <option value="">All schools</option>
+                    </select>
                 </div>
 
                 <div class="filter-group">
@@ -146,158 +147,224 @@
 
         <div id="settings-tab" class="tab-panel hidden">
             <div class="filters-section">
-                <h3 class="settings-heading">App Preferences</h3>
-                <div class="settings-form-grid">
-                    <div class="filter-group">
-                        <label for="theme-select">Scheme</label>
-                        <select id="theme-select" class="grade-dropdown">
-                            <option value="default">Default</option>
-                            <option value="light">Light</option>
-                            <option value="dark">Dark</option>
-                            <option value="nfl-team">NFL Team Colors</option>
-                        </select>
-                    </div>
-                    <div id="theme-team-group" class="filter-group hidden">
-                        <label for="theme-team-select">Team City</label>
-                        <select id="theme-team-select" class="grade-dropdown">
-                            <option value="Arizona">Arizona</option>
-                            <option value="Atlanta">Atlanta</option>
-                            <option value="Baltimore">Baltimore</option>
-                            <option value="Buffalo">Buffalo</option>
-                            <option value="Carolina">Carolina</option>
-                            <option value="Chicago">Chicago</option>
-                            <option value="Cincinnati">Cincinnati</option>
-                            <option value="Cleveland">Cleveland</option>
-                            <option value="Dallas">Dallas</option>
-                            <option value="Denver">Denver</option>
-                            <option value="Detroit">Detroit</option>
-                            <option value="Green Bay">Green Bay</option>
-                            <option value="Houston">Houston</option>
-                            <option value="Indianapolis">Indianapolis</option>
-                            <option value="Jacksonville">Jacksonville</option>
-                            <option value="Kansas City">Kansas City</option>
-                            <option value="Las Vegas">Las Vegas</option>
-                            <option value="Los Angeles AFC">Los Angeles AFC</option>
-                            <option value="Los Angeles NFC">Los Angeles NFC</option>
-                            <option value="Miami">Miami</option>
-                            <option value="Minnesota">Minnesota</option>
-                            <option value="New England">New England</option>
-                            <option value="New Orleans">New Orleans</option>
-                            <option value="New York AFC">New York AFC</option>
-                            <option value="New York NFC">New York NFC</option>
-                            <option value="Philadelphia">Philadelphia</option>
-                            <option value="Pittsburgh">Pittsburgh</option>
-                            <option value="San Francisco">San Francisco</option>
-                            <option value="Seattle">Seattle</option>
-                            <option value="Tampa Bay">Tampa Bay</option>
-                            <option value="Tennessee">Tennessee</option>
-                            <option value="Washington">Washington</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label for="font-select">Text Font</label>
-                        <select id="font-select" class="grade-dropdown">
-                            <option value="rajdhani">Rajdhani</option>
-                            <option value="inter">Inter</option>
-                            <option value="oswald">Oswald</option>
-                            <option value="roboto-slab">Roboto Slab</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="include-scouted-toggle">
-                            <input id="show-ranks-checkbox" type="checkbox" checked>
-                            Show overall rank in Search and Big Board cards
-                        </label>
-                    </div>
-                </div>
-
-                <button id="reset-preferences-btn" class="mini-btn">Reset Preferences</button>
-
-                <div class="settings-tool-actions">
-                    <button id="refresh-logos-btn" class="mini-btn">Refresh Downloaded Logos</button>
-                    <button id="update-rankings-btn" class="mini-btn">Update Rankings from Tankathon</button>
-                </div>
-                <p id="settings-tools-message" class="search-empty hidden"></p>
-
-                <div class="filter-group">
-                    <label>Grading Systems (select up to 2)</label>
-                    <div class="grade-system-options">
-                        <label class="include-scouted-toggle">
-                            <input type="checkbox" class="grading-system-checkbox" value="round" checked>
-                            Round Grade (Early-Round 1 to UDFA)
-                        </label>
-                        <label class="include-scouted-toggle">
-                            <input type="checkbox" class="grading-system-checkbox" value="poker">
-                            Poker Chip (Purple, Black, Blue, Green, Red, White)
-                        </label>
-                        <label class="include-scouted-toggle">
-                            <input type="checkbox" class="grading-system-checkbox" value="numerical">
-                            Numerical Grade (100-0)
-                        </label>
-                        <label class="include-scouted-toggle">
-                            <input type="checkbox" class="grading-system-checkbox" value="alphabet">
-                            Alphabet Grade (A+-F-)
-                        </label>
-                    </div>
-                    <p id="grading-systems-message" class="search-empty hidden"></p>
-                </div>
-
-                <button id="toggle-add-player-btn" class="mini-btn">Add Player to Database</button>
-
-                <div id="add-player-panel" class="hidden">
-                    <h3 class="settings-heading">Add Player to Database</h3>
-                    <div class="settings-form-grid">
-                    <div class="filter-group">
-                        <label for="settings-name">Player Name *</label>
-                        <input id="settings-name" class="search-input" type="text" placeholder="Player name">
-                    </div>
-                    <div class="filter-group">
-                        <label for="settings-rank">Overall Rank</label>
-                        <input id="settings-rank" class="search-input" type="number" min="1" placeholder="e.g. 42">
-                    </div>
-                    <div class="filter-group">
-                        <label for="settings-position">Position</label>
-                        <input id="settings-position" class="search-input" type="text" placeholder="e.g. WR">
-                    </div>
-                    <div class="filter-group">
-                        <label for="settings-school">School</label>
-                        <input id="settings-school" class="search-input" type="text" placeholder="e.g. Ohio State">
-                    </div>
-                    <div class="filter-group">
-                        <label for="settings-height">Height</label>
-                        <input id="settings-height" class="search-input" type="text" placeholder="e.g. 6-2">
-                    </div>
-                    <div class="filter-group">
-                        <label for="settings-weight">Weight</label>
-                        <input id="settings-weight" class="search-input" type="text" placeholder="e.g. 205">
-                    </div>
-                    <div class="filter-group">
-                        <label for="settings-jersey">Jersey Number</label>
-                        <input id="settings-jersey" class="search-input" type="text" placeholder="e.g. 1">
-                    </div>
-                    <div class="filter-group">
-                        <label for="settings-url">Player URL</label>
-                        <input id="settings-url" class="search-input" type="url" placeholder="https://...">
-                    </div>
-                    <div class="filter-group">
-                        <label for="settings-grade">Draft Grade</label>
-                        <select id="settings-grade" class="grade-dropdown"></select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="include-scouted-toggle">
-                            <input id="settings-scouted" type="checkbox">
-                            Mark as scouted
-                        </label>
-                    </div>
+                <div class="settings-stack">
+                    <div class="settings-block">
+                        <h3 class="settings-heading">App Preferences</h3>
+                        <div class="settings-form-grid">
+                            <div class="filter-group">
+                                <label for="theme-select">Scheme</label>
+                                <select id="theme-select" class="grade-dropdown">
+                                    <option value="default">Default</option>
+                                    <option value="light">Light</option>
+                                    <option value="dark">Dark</option>
+                                    <option value="nfl-team">NFL Team Colors</option>
+                                </select>
+                            </div>
+                            <div id="theme-team-group" class="filter-group hidden">
+                                <label for="theme-team-select">Team City</label>
+                                <select id="theme-team-select" class="grade-dropdown">
+                                    <option value="Arizona">Arizona</option>
+                                    <option value="Atlanta">Atlanta</option>
+                                    <option value="Baltimore">Baltimore</option>
+                                    <option value="Buffalo">Buffalo</option>
+                                    <option value="Carolina">Carolina</option>
+                                    <option value="Chicago">Chicago</option>
+                                    <option value="Cincinnati">Cincinnati</option>
+                                    <option value="Cleveland">Cleveland</option>
+                                    <option value="Dallas">Dallas</option>
+                                    <option value="Denver">Denver</option>
+                                    <option value="Detroit">Detroit</option>
+                                    <option value="Green Bay">Green Bay</option>
+                                    <option value="Houston">Houston</option>
+                                    <option value="Indianapolis">Indianapolis</option>
+                                    <option value="Jacksonville">Jacksonville</option>
+                                    <option value="Kansas City">Kansas City</option>
+                                    <option value="Las Vegas">Las Vegas</option>
+                                    <option value="Los Angeles AFC">Los Angeles AFC</option>
+                                    <option value="Los Angeles NFC">Los Angeles NFC</option>
+                                    <option value="Miami">Miami</option>
+                                    <option value="Minnesota">Minnesota</option>
+                                    <option value="New England">New England</option>
+                                    <option value="New Orleans">New Orleans</option>
+                                    <option value="New York AFC">New York AFC</option>
+                                    <option value="New York NFC">New York NFC</option>
+                                    <option value="Philadelphia">Philadelphia</option>
+                                    <option value="Pittsburgh">Pittsburgh</option>
+                                    <option value="San Francisco">San Francisco</option>
+                                    <option value="Seattle">Seattle</option>
+                                    <option value="Tampa Bay">Tampa Bay</option>
+                                    <option value="Tennessee">Tennessee</option>
+                                    <option value="Washington">Washington</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label for="font-select">Text Font</label>
+                                <select id="font-select" class="grade-dropdown">
+                                    <option value="rajdhani">Rajdhani</option>
+                                    <option value="inter">Inter</option>
+                                    <option value="oswald">Oswald</option>
+                                    <option value="roboto-slab">Roboto Slab</option>
+                                    <option value="poppins">Poppins</option>
+                                    <option value="montserrat">Montserrat</option>
+                                    <option value="lato">Lato</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label class="include-scouted-toggle">
+                                    <input id="show-consensus-grade-checkbox" type="checkbox">
+                                    Show consensus grade on Big Board cards
+                                </label>
+                            </div>
+                        </div>
+                        <button id="reset-preferences-btn" class="mini-btn">Reset Preferences</button>
                     </div>
 
-                    <div class="filter-group">
-                        <label for="settings-notes">Scouting Notes</label>
-                        <textarea id="settings-notes" class="scouting-notes-input" placeholder="Add your scouting notes here..." rows="6"></textarea>
+                    <div class="settings-block">
+                        <h3 class="settings-heading">App Tools</h3>
+                        <div class="settings-tool-actions">
+                            <button id="refresh-logos-btn" class="mini-btn">Refresh Downloaded Logos</button>
+                            <button id="update-rankings-btn" class="mini-btn">Update Rankings from Tankathon</button>
+                            <button id="import-consensus-btn" class="mini-btn">Import 2026 Consensus Board</button>
+                            <button id="merge-duplicates-btn" class="mini-btn">Merge Duplicate Player Variants</button>
+                        </div>
+                        <p id="settings-tools-message" class="search-empty hidden"></p>
                     </div>
 
-                    <button id="settings-add-player-btn" class="randomize-button search-button">Add Player</button>
-                    <p id="settings-message" class="search-empty hidden"></p>
+                    <div class="settings-block">
+                        <details class="settings-collapsible" open>
+                            <summary class="settings-collapsible-summary mini-btn" role="button">
+                                <span>Import / Export Big Boards</span>
+                                <span class="settings-collapsible-caret">▾</span>
+                            </summary>
+                            <div class="settings-collapsible-body">
+                                <div class="filter-group">
+                                    <label for="board-import-files">Import Big Board TXT Files</label>
+                                    <input id="board-import-files" class="search-input" type="file" accept=".txt,text/plain" multiple>
+                                    <p class="search-empty">Expected format per line: <strong>#. player name</strong> (e.g. 1. Travis Hunter)</p>
+                                </div>
+
+                                <div class="filter-group">
+                                    <label class="include-scouted-toggle">
+                                        <input id="use-board-weights-checkbox" type="checkbox">
+                                        Use custom board weights (otherwise equal average)
+                                    </label>
+                                    <div id="board-import-list" class="board-import-list"></div>
+                                </div>
+
+                                <div class="settings-tool-actions">
+                                    <button id="import-big-boards-btn" class="mini-btn">Import & Normalize Rankings</button>
+                                    <button id="import-nflmock-url-btn" class="mini-btn">Import from NFLMockDraftDB Url</button>
+                                    <button id="export-overall-board-btn" class="mini-btn">Export Overall Board (.txt)</button>
+                                </div>
+
+                                <div class="settings-tool-actions">
+                                    <select id="export-position-select" class="grade-dropdown export-position-select">
+                                        <option value="">Select position for export...</option>
+                                    </select>
+                                    <button id="export-position-board-btn" class="mini-btn">Export Position Board (.txt)</button>
+                                </div>
+
+                                <div class="filter-group">
+                                    <div class="weighting-header-row">
+                                        <label>Board Weights & Primary Default Board</label>
+                                        <span class="weighting-tooltip" title="Weighted Average Rank = Σ(board rank × board weight) ÷ Σ(weights). Set a board weight to 0 to remove it from weighted averaging. Primary Default board is used first when available.">ⓘ</span>
+                                    </div>
+                                    <p class="search-empty weighting-explainer">Adjust weights below to control how much each board contributes.</p>
+                                    <div id="board-weights-list" class="board-weights-list"></div>
+                                    <p id="board-weighting-summary" class="search-empty weighting-summary"></p>
+                                    <div class="settings-tool-actions">
+                                        <button id="save-board-weights-btn" class="mini-btn">Save Board Weights</button>
+                                    </div>
+                                </div>
+                                <p id="board-import-message" class="search-empty hidden"></p>
+                            </div>
+                        </details>
+                    </div>
+
+                    <div class="settings-block">
+                        <div class="filter-group">
+                            <label>Grading Systems (select up to 2)</label>
+                            <div class="grade-system-options">
+                                <label class="include-scouted-toggle">
+                                    <input type="checkbox" class="grading-system-checkbox" value="round" checked>
+                                    Round Grade (Early-Round 1 to UDFA)
+                                </label>
+                                <label class="include-scouted-toggle">
+                                    <input type="checkbox" class="grading-system-checkbox" value="poker">
+                                    Poker Chip (Purple, Black, Blue, Green, Red, White)
+                                </label>
+                                <label class="include-scouted-toggle">
+                                    <input type="checkbox" class="grading-system-checkbox" value="numerical">
+                                    Numerical Grade (100-0)
+                                </label>
+                                <label class="include-scouted-toggle">
+                                    <input type="checkbox" class="grading-system-checkbox" value="alphabet">
+                                    Alphabet Grade (A+-F-)
+                                </label>
+                            </div>
+                            <p id="grading-systems-message" class="search-empty hidden"></p>
+                        </div>
+                    </div>
+
+                    <div class="settings-block">
+                        <button id="toggle-add-player-btn" class="mini-btn">Add Player to Database</button>
+
+                        <div id="add-player-panel" class="hidden">
+                            <h3 class="settings-heading">Add Player to Database</h3>
+                            <div class="settings-form-grid">
+                            <div class="filter-group">
+                                <label for="settings-name">Player Name *</label>
+                                <input id="settings-name" class="search-input" type="text" placeholder="Player name">
+                            </div>
+                            <div class="filter-group">
+                                <label for="settings-rank">Overall Rank</label>
+                                <input id="settings-rank" class="search-input" type="number" min="1" placeholder="e.g. 42">
+                            </div>
+                            <div class="filter-group">
+                                <label for="settings-position">Position</label>
+                                <input id="settings-position" class="search-input" type="text" placeholder="e.g. WR">
+                            </div>
+                            <div class="filter-group">
+                                <label for="settings-school">School</label>
+                                <input id="settings-school" class="search-input" type="text" placeholder="e.g. Ohio State">
+                            </div>
+                            <div class="filter-group">
+                                <label for="settings-height">Height</label>
+                                <input id="settings-height" class="search-input" type="text" placeholder="e.g. 6-2">
+                            </div>
+                            <div class="filter-group">
+                                <label for="settings-weight">Weight</label>
+                                <input id="settings-weight" class="search-input" type="text" placeholder="e.g. 205">
+                            </div>
+                            <div class="filter-group">
+                                <label for="settings-jersey">Jersey Number</label>
+                                <input id="settings-jersey" class="search-input" type="text" placeholder="e.g. 1">
+                            </div>
+                            <div class="filter-group">
+                                <label for="settings-url">Player URL</label>
+                                <input id="settings-url" class="search-input" type="url" placeholder="https://...">
+                            </div>
+                            <div class="filter-group">
+                                <label for="settings-grade">Draft Grade</label>
+                                <select id="settings-grade" class="grade-dropdown"></select>
+                            </div>
+                            <div class="filter-group">
+                                <label class="include-scouted-toggle">
+                                    <input id="settings-scouted" type="checkbox">
+                                    Mark as scouted
+                                </label>
+                            </div>
+                            </div>
+
+                            <div class="filter-group">
+                                <label for="settings-notes">Scouting Notes</label>
+                                <textarea id="settings-notes" class="scouting-notes-input" placeholder="Add your scouting notes here..." rows="6"></textarea>
+                            </div>
+
+                            <button id="settings-add-player-btn" class="randomize-button search-button">Add Player</button>
+                            <p id="settings-message" class="search-empty hidden"></p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -311,14 +378,11 @@
                         <span id="player-position" class="badge position-badge"></span>
                         <span id="player-school" class="badge school-badge"></span>
                         <span id="player-jersey" class="badge jersey-badge" style="display: none;"></span>
-                        <span id="player-rank" class="badge rank-badge clickable-badge" title="Click to toggle visibility">
-                            <span class="hidden-text">Overall Rank: </span>
-                            <span class="rank-value">???</span>
+                        <span id="player-board-ranks-toggle" class="badge rank-badge clickable-badge" title="Click to show or hide board ranks">
+                            <span class="hidden-text">Board Ranks: </span>
+                            <span id="board-ranks-toggle-value">Hidden</span>
                         </span>
-                        <span id="player-pos-rank" class="badge pos-rank-badge clickable-badge" title="Click to toggle visibility" style="display: none;">
-                            <span class="hidden-text">Pos Rank: </span>
-                            <span class="pos-rank-value">???</span>
-                        </span>
+                        <div id="player-board-ranks" class="board-ranks-list board-ranks-top"></div>
                     </div>
                 </div>
                 <div class="player-actions">
@@ -365,6 +429,8 @@
                 </div>
 
                 <div class="player-notes-section">
+                    <button id="open-profile-edit-btn" class="save-btn profile-edit-trigger" type="button">Edit Player Profile</button>
+
                     <h3>Scouting Notes</h3>
                     <textarea id="notes-input" placeholder="Add your scouting notes here..." rows="6"></textarea>
                     <button id="save-notes-btn" class="save-btn">Save Notes</button>
@@ -407,6 +473,75 @@
                 <button id="confirm-add-to-rank-btn" class="mini-btn">Add at Position</button>
                 <button id="confirm-add-to-bottom-btn" class="mini-btn">Add to Bottom</button>
                 <button id="cancel-add-to-board-btn" class="mini-btn remove">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="edit-profile-dialog" class="modal-overlay hidden">
+        <div class="modal-card profile-edit-modal">
+            <h3>Edit Player Profile</h3>
+            <p class="modal-subtext">Update profile fields and add stats using simple key/value rows.</p>
+
+            <div class="settings-form-grid player-edit-grid">
+                <div class="filter-group">
+                    <label for="edit-position-input">Position</label>
+                    <select id="edit-position-input" class="grade-dropdown">
+                        <option value="">Select position...</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="edit-school-input">School</label>
+                    <input id="edit-school-input" class="search-input" type="text" placeholder="e.g. Ohio State">
+                </div>
+                <div class="filter-group">
+                    <label for="edit-height-input">Height</label>
+                    <input id="edit-height-input" class="search-input" type="text" placeholder="e.g. 6-2">
+                </div>
+                <div class="filter-group">
+                    <label for="edit-weight-input">Weight</label>
+                    <input id="edit-weight-input" class="search-input" type="text" placeholder="e.g. 205">
+                </div>
+                <div class="filter-group">
+                    <label for="edit-jersey-input">Jersey #</label>
+                    <input id="edit-jersey-input" class="search-input" type="text" placeholder="e.g. 1">
+                </div>
+                <div class="filter-group">
+                    <label for="edit-url-input">Player URL</label>
+                    <input id="edit-url-input" class="search-input" type="url" placeholder="https://...">
+                </div>
+            </div>
+
+            <div class="filter-group">
+                <label>Player Stats</label>
+                <p class="search-empty profile-stats-helper">Use one row per stat (example: forty_time = 4.39).</p>
+                <div id="edit-stats-builder" class="profile-stats-builder"></div>
+                <button id="add-profile-stat-btn" class="mini-btn" type="button">Add Stat Row</button>
+            </div>
+
+            <div class="modal-actions">
+                <button id="save-profile-btn" class="mini-btn" type="button">Save Profile Info</button>
+                <button id="close-profile-edit-btn" class="mini-btn remove" type="button">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="import-nflmock-url-dialog" class="modal-overlay hidden">
+        <div class="modal-card">
+            <h3>Import NFLMockDraftDatabase Board</h3>
+            <p class="modal-subtext">Paste a full big board URL from NFLMockDraftDatabase, then click Import Board URL. You can optionally provide a custom board name.</p>
+            <div class="filter-group">
+                <label for="nflmock-board-url-input">Big Board URL</label>
+                <input id="nflmock-board-url-input" class="search-input" type="url" placeholder="https://www.nflmockdraftdatabase.com/big-boards/2026/..." />
+            </div>
+            <div class="filter-group">
+                <label for="nflmock-board-custom-name-input">Custom Board Name (optional)</label>
+                <input id="nflmock-board-custom-name-input" class="search-input" type="text" maxlength="120" placeholder="e.g. Dane Brugler Big Board (2/10)" />
+            </div>
+            <p id="nflmock-url-message" class="search-empty hidden"></p>
+            <div class="modal-actions">
+                <button id="open-nflmock-boards-btn" class="mini-btn" type="button">Find Boards</button>
+                <button id="confirm-import-nflmock-url-btn" class="mini-btn" type="button">Import Board URL</button>
+                <button id="close-import-nflmock-url-btn" class="mini-btn remove" type="button">Cancel</button>
             </div>
         </div>
     </div>
