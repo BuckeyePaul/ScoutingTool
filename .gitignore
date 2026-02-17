@@ -8,4 +8,4 @@ venv/
 .env
 scout_database.db
 .DS_Store
-.static/logos/
+static/logos/
