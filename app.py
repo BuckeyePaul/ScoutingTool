@@ -59,6 +59,7 @@ def get_players():
     name_search = request.args.get('name', '').strip()
     school = request.args.get('school', '').strip()
     include_scouted = request.args.get('include_scouted', 'false').lower() == 'true'
+    watch_list_only = request.args.get('watch_list_only', 'false').lower() == 'true'
  
     players = db.get_filtered_players(
         positions=positions if positions else None,
@@ -66,7 +67,8 @@ def get_players():
         include_scouted=include_scouted,
         search_term=search_term if search_term else None,
         name_search=name_search if name_search else None,
-        school=school if school else None
+        school=school if school else None,
+        watch_list_only=watch_list_only
     )
  
     return jsonify(players)
@@ -76,11 +78,13 @@ def get_random_player():
     """Get a random player based on filters"""
     positions = request.args.getlist('positions[]')
     max_rank = request.args.get('max_rank', type=int)
+    watch_list_only = request.args.get('watch_list_only', 'false').lower() == 'true'
  
     players = db.get_filtered_players(
         positions=positions if positions else None,
         max_rank=max_rank,
-        include_scouted=False
+        include_scouted=False,
+        watch_list_only=watch_list_only
     )
  
     if not players:
@@ -88,6 +92,7 @@ def get_random_player():
  
     # Select random player
     selected_player = random.choice(players)
+    selected_player = db.get_player_by_id(selected_player['id']) or selected_player
  
     # Enhance with external links
     selected_player['sports_reference_url'] = generate_sports_reference_url(selected_player)
@@ -248,6 +253,47 @@ def autosort_big_board():
     result = db.auto_sort_big_board(board_type=board_type, position=position)
     return jsonify(result)
 
+
+@app.route('/api/watchlist')
+def get_watch_list():
+    """Get personal watch list entries."""
+    return jsonify(db.get_watch_list())
+
+
+@app.route('/api/watchlist/add', methods=['POST'])
+def add_to_watch_list():
+    """Add player to personal watch list."""
+    data = request.get_json() or {}
+    player_id = data.get('player_id')
+    if not player_id:
+        return jsonify({'success': False, 'error': 'player_id is required'}), 400
+
+    result = db.add_player_to_watch_list(player_id)
+    status_code = 200 if result.get('success') else 400
+    return jsonify(result), status_code
+
+
+@app.route('/api/watchlist/reorder', methods=['POST'])
+def reorder_watch_list():
+    """Persist watch list drag-and-drop order."""
+    data = request.get_json() or {}
+    ordered_player_ids = data.get('player_ids', [])
+    if not isinstance(ordered_player_ids, list):
+        return jsonify({'success': False, 'error': 'player_ids must be a list'}), 400
+
+    return jsonify(db.reorder_watch_list(ordered_player_ids))
+
+
+@app.route('/api/watchlist/remove', methods=['POST'])
+def remove_from_watch_list():
+    """Remove player from personal watch list."""
+    data = request.get_json() or {}
+    player_id = data.get('player_id')
+    if not player_id:
+        return jsonify({'success': False, 'error': 'player_id is required'}), 400
+
+    return jsonify(db.remove_player_from_watch_list(player_id))
+
 @app.route('/api/settings/refresh-logos', methods=['POST'])
 def refresh_logos():
     """Refresh school logos using in-process downloader logic."""
@@ -396,6 +442,15 @@ def update_rank_boards():
     data = request.get_json() or {}
     board_updates = data.get('boards', [])
     result = db.update_rank_board_weights(board_updates)
+    status_code = 200 if result.get('success') else 400
+    return jsonify(result), status_code
+
+@app.route('/api/settings/rank-boards/remove', methods=['POST'])
+def remove_rank_board():
+    """Remove an imported rank board from settings."""
+    data = request.get_json() or {}
+    board_key = data.get('board_key', '')
+    result = db.remove_rank_board(board_key)
     status_code = 200 if result.get('success') else 400
     return jsonify(result), status_code
 

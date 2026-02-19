@@ -121,15 +121,22 @@
                 item.addEventListener('dragstart', handleBoardDragStart);
                 item.addEventListener('dragover', handleBoardDragOver);
                 item.addEventListener('dragend', handleBoardDragEnd);
-                item.addEventListener('click', function (event) {
-                    if (event.target.closest('button')) {
-                        return;
-                    }
-                    openBigBoardPlayerReport(entry.id);
-                });
 
                 const main = document.createElement('div');
                 main.className = 'bigboard-item-main';
+                main.setAttribute('role', 'button');
+                main.setAttribute('tabindex', '0');
+                main.setAttribute('aria-label', `Open profile for ${entry.name}`);
+                main.addEventListener('click', function(event) {
+                    event.stopPropagation();
+                    openBigBoardPlayerReport(entry.id);
+                });
+                main.addEventListener('keydown', function(event) {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        openBigBoardPlayerReport(entry.id);
+                    }
+                });
 
                 const rank = document.createElement('div');
                 rank.className = 'bigboard-rank';
@@ -416,10 +423,14 @@
                 availablePlayers.slice(0, 100).forEach(player => {
                     const card = document.createElement('div');
                     card.className = 'search-result-card bigboard-add-card';
-                    card.draggable = true;
+                    card.draggable = false;
                     card.dataset.playerId = String(player.id);
-                    card.addEventListener('dragstart', handleAddCardDragStart);
-                    card.addEventListener('dragend', handleAddCardDragEnd);
+                    card.addEventListener('click', (event) => {
+                        if (event.target.closest('button')) {
+                            return;
+                        }
+                        openBigBoardPlayerReport(player.id);
+                    });
 
                     const name = document.createElement('div');
                     name.className = 'search-result-name';

@@ -38,6 +38,7 @@
             <button class="tab-btn active" data-tab="search-tab">Player Search</button>
             <button class="tab-btn" data-tab="randomizer-tab">Randomizer</button>
             <button class="tab-btn" data-tab="bigboard-tab">Big Board</button>
+            <button class="tab-btn" data-tab="watchlist-tab">Watch List</button>
             <button class="tab-btn" data-tab="settings-tab">Settings</button>
         </div>
 
@@ -59,6 +60,13 @@
                         <button class="rank-btn" data-rank="100">Top 100</button>
                         <button class="rank-btn" data-rank="200">Top 200</button>
                     </div>
+                </div>
+
+                <div class="filter-group">
+                    <label class="include-scouted-toggle">
+                        <input id="randomizer-watchlist-only" type="checkbox">
+                        Randomize from Watch List only
+                    </label>
                 </div>
             </div>
 
@@ -146,6 +154,16 @@
                     </div>
                     <div id="bigboard-list" class="bigboard-list"></div>
                 </div>
+            </div>
+        </div>
+
+        <div id="watchlist-tab" class="tab-panel hidden">
+            <div class="search-results-section">
+                <div class="bigboard-header-row">
+                    <h3>Personal Watch List</h3>
+                    <span class="search-empty">Drag to reorder. Add players from Search or Randomizer profiles.</span>
+                </div>
+                <div id="watchlist-list" class="bigboard-list"></div>
             </div>
         </div>
 
@@ -394,6 +412,9 @@
                 <div class="player-actions">
                     <button id="close-player-report-btn" class="action-btn mini-btn remove modal-close-btn" type="button">
                         ✕ Close
+                    </button>
+                    <button id="toggle-watchlist-btn" class="action-btn mini-btn" type="button">
+                        + Add to Watch List
                     </button>
                     <button id="mark-scouted-btn" class="action-btn scout-btn">
                         <span>✓</span> Mark as Scouted
