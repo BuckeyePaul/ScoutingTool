@@ -180,6 +180,103 @@ class RankingsAndImportsTests(unittest.TestCase):
         export_text = self.db.export_big_board_text(scope='overall')
         self.assertEqual(export_text.splitlines(), ['1. Alpha Prospect', '2. Beta Prospect'])
 
+    def test_watch_list_add_reorder_and_remove(self):
+        conn = self._conn()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO players (name, position) VALUES ('Watch Prospect A', 'WR')")
+        a_id = cursor.lastrowid
+        cursor.execute("INSERT INTO players (name, position) VALUES ('Watch Prospect B', 'CB')")
+        b_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+
+        add_a = self.db.add_player_to_watch_list(a_id)
+        add_b = self.db.add_player_to_watch_list(b_id)
+        self.assertTrue(add_a['success'])
+        self.assertTrue(add_b['success'])
+
+        watch_list = self.db.get_watch_list()
+        self.assertEqual([row['id'] for row in watch_list], [a_id, b_id])
+
+        reorder_result = self.db.reorder_watch_list([b_id, a_id])
+        self.assertTrue(reorder_result['success'])
+        watch_list = self.db.get_watch_list()
+        self.assertEqual([row['id'] for row in watch_list], [b_id, a_id])
+
+        remove_result = self.db.remove_player_from_watch_list(b_id)
+        self.assertTrue(remove_result['success'])
+        watch_list = self.db.get_watch_list()
+        self.assertEqual([row['id'] for row in watch_list], [a_id])
+
+    def test_mark_scouted_removes_from_watch_list(self):
+        conn = self._conn()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO players (name, position, scouted) VALUES ('Watch Scout Prospect', 'RB', 0)")
+        player_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+
+        add_result = self.db.add_player_to_watch_list(player_id)
+        self.assertTrue(add_result['success'])
+        self.assertEqual(len(self.db.get_watch_list()), 1)
+
+        self.db.mark_as_scouted(player_id)
+
+        watch_list = self.db.get_watch_list()
+        self.assertEqual(len(watch_list), 0)
+
+        conn = self._conn()
+        cursor = conn.cursor()
+        cursor.execute('SELECT scouted FROM players WHERE id = ?', (player_id,))
+        row = cursor.fetchone()
+        conn.close()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], 1)
+
+    def test_get_filtered_players_watch_list_only(self):
+        conn = self._conn()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO players (name, position, scouted) VALUES ('Watch Filter A', 'QB', 0)")
+        watch_id = cursor.lastrowid
+        cursor.execute("INSERT INTO players (name, position, scouted) VALUES ('Watch Filter B', 'QB', 0)")
+        non_watch_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+
+        self.db.add_player_to_watch_list(watch_id)
+
+        all_qbs = self.db.get_filtered_players(positions=['QB'], include_scouted=False)
+        watch_only_qbs = self.db.get_filtered_players(positions=['QB'], include_scouted=False, watch_list_only=True)
+
+        all_ids = {player['id'] for player in all_qbs}
+        watch_only_ids = {player['id'] for player in watch_only_qbs}
+
+        self.assertIn(watch_id, all_ids)
+        self.assertIn(non_watch_id, all_ids)
+        self.assertIn(watch_id, watch_only_ids)
+        self.assertNotIn(non_watch_id, watch_only_ids)
+
+    def test_remove_imported_rank_board(self):
+        boards = [
+            {
+                'name': 'Temp Imported Board',
+                'text': '1. Prospect One\n2. Prospect Two',
+                'weight': 1
+            }
+        ]
+        import_result = self.db.import_external_big_boards(boards, weighting_mode='equal')
+        self.assertTrue(import_result['success'])
+
+        remove_result = self.db.remove_rank_board('imported_temp_imported_board')
+        self.assertTrue(remove_result['success'])
+
+        config = self.db.get_rank_boards_config()
+        board_keys = {board['board_key'] for board in config}
+        self.assertNotIn('imported_temp_imported_board', board_keys)
+
+        protected_remove = self.db.remove_rank_board('consensus_2026')
+        self.assertFalse(protected_remove['success'])
+
 
 if __name__ == '__main__':
     unittest.main()

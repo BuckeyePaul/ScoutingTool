@@ -2,6 +2,24 @@
 
 NFL Draft Scout Assistant is a local Flask + SQLite web app for scouting prospects, comparing ranking boards, and managing your own Big Board workflow.
 
+## Packaged App Quick Start (Windows Users)
+
+If you downloaded the packaged build, you only need the files in this folder/zip.
+
+1. Double-click `ScoutingApp.exe`.
+2. Wait for your browser to open `http://127.0.0.1:5000`.
+3. Open the **Settings** tab and run these buttons in order:
+  - **Import 2026 Consensus Board**
+  - **Import Tankathon Board**
+  - **Recalculate Player Rankings**
+4. (Optional) Run **Refresh Downloaded Logos** and/or import additional boards.
+
+After that, use Search / Randomizer / Big Board / Watch List normally. When finished, click **Stop App** in the top-right of the app.
+
+Notes:
+- First launch and first import can take a little time.
+- Board import buttons require internet access.
+
 ## Features
 
 - Multi-source rankings support:

@@ -438,7 +438,7 @@ class ScoutDatabase:
                 conn.close()
                 return players
         
-        def get_filtered_players(self, positions=None, max_rank=None, include_scouted=False, search_term=None, name_search=None, school=None):
+        def get_filtered_players(self, positions=None, max_rank=None, include_scouted=False, search_term=None, name_search=None, school=None, watch_list_only=False):
                 """Get filtered players based on criteria"""
                 conn = self.get_connection()
                 cursor = conn.cursor()
@@ -474,6 +474,18 @@ class ScoutDatabase:
                 
                 if not include_scouted:
                         query += ' AND scouted = 0'
+
+                if watch_list_only:
+                        query += '''
+                                AND EXISTS (
+                                        SELECT 1
+                                        FROM big_board_entries e
+                                        JOIN big_boards b ON b.id = e.board_id
+                                        WHERE e.player_id = players.id
+                                          AND b.board_type = 'watchlist'
+                                          AND b.position IS NULL
+                                )
+                        '''
                 
                 query += ' ORDER BY rank'
 
@@ -537,6 +549,19 @@ class ScoutDatabase:
                 personal_pos_rank_row = cursor.fetchone()
                 player['personal_pos_rank'] = personal_pos_rank_row[0] if personal_pos_rank_row and personal_pos_rank_row[0] is not None else None
 
+                cursor.execute('''
+                        SELECT e.rank_order
+                        FROM big_board_entries e
+                        JOIN big_boards b ON b.id = e.board_id
+                        WHERE e.player_id = ?
+                          AND b.board_type = 'watchlist'
+                          AND b.position IS NULL
+                        LIMIT 1
+                ''', (player_id,))
+                watchlist_rank_row = cursor.fetchone()
+                player['watchlist_rank'] = watchlist_rank_row[0] if watchlist_rank_row else None
+                player['in_watch_list'] = bool(watchlist_rank_row)
+
                 player['board_ranks'] = self.get_player_board_ranks(player_id, conn=conn)
                 player['weighted_average_rank'] = player.get('weighted_avg_rank')
 
@@ -553,6 +578,23 @@ class ScoutDatabase:
                         SET scouted = 1, scout_date = ?
                         WHERE ID = ?
                 ''', (datetime.now().isoformat(), player_id))
+
+                watch_list_board_id = self._get_or_create_big_board_id(cursor, board_type='watchlist', position=None)
+                cursor.execute(
+                        'DELETE FROM big_board_entries WHERE board_id = ? AND player_id = ?',
+                        (watch_list_board_id, player_id)
+                )
+
+                cursor.execute(
+                        'SELECT player_id FROM big_board_entries WHERE board_id = ? ORDER BY rank_order ASC, id ASC',
+                        (watch_list_board_id,)
+                )
+                remaining = [row[0] for row in cursor.fetchall()]
+                for index, pid in enumerate(remaining, start=1):
+                        cursor.execute(
+                                'UPDATE big_board_entries SET rank_order = ? WHERE board_id = ? AND player_id = ?',
+                                (index, watch_list_board_id, pid)
+                        )
 
                 conn.commit()
                 conn.close()
@@ -720,6 +762,44 @@ class ScoutDatabase:
                 if target_primary_key:
                         cursor.execute('UPDATE rank_boards SET is_primary = 0')
                         cursor.execute('UPDATE rank_boards SET is_primary = 1 WHERE board_key = ?', (target_primary_key,))
+
+                conn.commit()
+                conn.close()
+
+                self.recalculate_default_rankings()
+                return {'success': True}
+
+        def remove_rank_board(self, board_key):
+                board_key = (board_key or '').strip()
+                if not board_key:
+                        return {'success': False, 'error': 'board_key is required.'}
+
+                protected_keys = {'consensus_2026', 'tankathon'}
+                if board_key in protected_keys:
+                        return {'success': False, 'error': 'Core rank boards cannot be removed.'}
+
+                conn = self.get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute('SELECT board_key, source_type, is_primary FROM rank_boards WHERE board_key = ?', (board_key,))
+                board_row = cursor.fetchone()
+                if not board_row:
+                        conn.close()
+                        return {'success': False, 'error': 'Board not found.'}
+
+                _, source_type, is_primary = board_row
+                if source_type != 'imported':
+                        conn.close()
+                        return {'success': False, 'error': 'Only imported boards can be removed.'}
+
+                cursor.execute('DELETE FROM rank_boards WHERE board_key = ?', (board_key,))
+
+                if is_primary:
+                        cursor.execute('SELECT board_key FROM rank_boards ORDER BY board_name ASC LIMIT 1')
+                        fallback = cursor.fetchone()
+                        if fallback:
+                                cursor.execute('UPDATE rank_boards SET is_primary = 0')
+                                cursor.execute('UPDATE rank_boards SET is_primary = 1 WHERE board_key = ?', (fallback[0],))
 
                 conn.commit()
                 conn.close()
@@ -1109,6 +1189,50 @@ class ScoutDatabase:
                 conn.commit()
                 conn.close()
                 return {'success': True}
+
+        def get_watch_list(self):
+                """Get ranked personal watch list entries."""
+                return self.get_big_board(board_type='watchlist', position=None)
+
+        def add_player_to_watch_list(self, player_id):
+                """Add player to personal watch list at the bottom."""
+                conn = self.get_connection()
+                cursor = conn.cursor()
+
+                board_id = self._get_or_create_big_board_id(cursor, board_type='watchlist', position=None)
+
+                cursor.execute(
+                        'SELECT 1 FROM big_board_entries WHERE board_id = ? AND player_id = ?',
+                        (board_id, player_id)
+                )
+                if cursor.fetchone():
+                        conn.close()
+                        return {'success': False, 'error': 'Player is already on your watch list.'}
+
+                cursor.execute('SELECT id FROM players WHERE id = ?', (player_id,))
+                if not cursor.fetchone():
+                        conn.close()
+                        return {'success': False, 'error': 'Player not found.'}
+
+                cursor.execute('SELECT COALESCE(MAX(rank_order), 0) FROM big_board_entries WHERE board_id = ?', (board_id,))
+                max_rank = cursor.fetchone()[0] or 0
+
+                cursor.execute(
+                        'INSERT INTO big_board_entries (board_id, player_id, rank_order) VALUES (?, ?, ?)',
+                        (board_id, player_id, max_rank + 1)
+                )
+
+                conn.commit()
+                conn.close()
+                return {'success': True}
+
+        def reorder_watch_list(self, ordered_player_ids):
+                """Persist drag-and-drop order for watch list."""
+                return self.reorder_big_board(ordered_player_ids, board_type='watchlist', position=None)
+
+        def remove_player_from_watch_list(self, player_id):
+                """Remove player from watch list and compress ranks."""
+                return self.remove_player_from_big_board(player_id, board_type='watchlist', position=None)
 
         @staticmethod
         def _normalize_player_name(name):

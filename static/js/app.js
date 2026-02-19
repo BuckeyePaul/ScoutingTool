@@ -11,6 +11,9 @@ let currentPlayerSourceTab = null;
 let importedBoardFiles = [];
 let bigBoardController = null;
 let playerReportController = null;
+let draggedWatchListPlayerId = null;
+let watchListDropPlaceholder = null;
+let watchListLastDropIndex = null;
 const SETTINGS_STORAGE_KEY = 'scout_app_settings';
 const ACTIVE_TAB_STORAGE_KEY = 'scout_active_tab';
 const DEFAULT_APP_SETTINGS = {
@@ -207,6 +210,10 @@ function switchTab(tabId) {
         searchBigBoardPlayers();
     }
 
+    if (nextTabId === 'watchlist-tab') {
+        loadWatchList();
+    }
+
     localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, nextTabId);
     updatePlayerDetailsVisibility(nextTabId);
 }
@@ -250,6 +257,17 @@ function positionPlayerDetailsForCurrentSource() {
                 randomizerTab.insertBefore(detailsSection, insertAfter);
             } else {
                 randomizerTab.appendChild(detailsSection);
+            }
+        }
+    } else if (currentPlayerSourceTab === 'watchlist-tab') {
+        const watchListTab = document.getElementById('watchlist-tab');
+        const watchListSection = watchListTab ? watchListTab.querySelector('.search-results-section') : null;
+        if (watchListTab && watchListSection) {
+            const insertAfter = watchListSection.nextSibling;
+            if (insertAfter) {
+                watchListTab.insertBefore(detailsSection, insertAfter);
+            } else {
+                watchListTab.appendChild(detailsSection);
             }
         }
     }
@@ -393,6 +411,7 @@ function setupEventListeners() {
 
     // Scout button
     document.getElementById('mark-scouted-btn').addEventListener('click', toggleScoutStatus);
+    document.getElementById('toggle-watchlist-btn').addEventListener('click', toggleCurrentPlayerWatchList);
  
     // Save notes button
     document.getElementById('save-notes-btn').addEventListener('click', saveNotes);
@@ -883,10 +902,21 @@ function renderRankBoardSettings(boards) {
         visibilityWrap.appendChild(visibilityCheckbox);
         visibilityWrap.appendChild(visibilityText);
 
+        const removeWrap = document.createElement('div');
+        if (board.source_type === 'imported') {
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'mini-btn remove';
+            removeBtn.textContent = 'Remove Board';
+            removeBtn.addEventListener('click', () => removeImportedRankBoard(board));
+            removeWrap.appendChild(removeBtn);
+        }
+
         row.appendChild(nameWrap);
         row.appendChild(weightWrap);
         row.appendChild(primaryWrap);
         row.appendChild(visibilityWrap);
+        row.appendChild(removeWrap);
         container.appendChild(row);
 
         if (index === boards.length - 1 && !boards.some(item => item.is_primary) && primaryRadio) {
@@ -895,6 +925,49 @@ function renderRankBoardSettings(boards) {
     });
 
     updateBoardWeightingSummary();
+}
+
+async function removeImportedRankBoard(board) {
+    const boardName = board?.board_name || 'this board';
+    const confirmed = window.UIFeedback?.confirmAction
+        ? await window.UIFeedback.confirmAction({
+            title: 'Remove Imported Board?',
+            message: `This will permanently remove ${boardName} from rank-board settings.`,
+            confirmText: 'Remove',
+            cancelText: 'Cancel'
+        })
+        : window.confirm(`Remove ${boardName} from rank-board settings?`);
+
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+        const { response, data } = await requestPostJson('/api/settings/rank-boards/remove', {
+            board_key: board.board_key
+        });
+        const result = data || {};
+
+        if (!response.ok || !result.success) {
+            const errorText = result.error || 'Could not remove board.';
+            showToast('Remove Failed', errorText, 'error', 7000);
+            return;
+        }
+
+        showToast('Board Removed', `${boardName} was removed.`, 'success', 5000);
+        await loadRankBoardSettings();
+        loadStats();
+        if (document.getElementById('search-tab').classList.contains('active')) {
+            searchPlayers();
+        }
+        if (document.getElementById('bigboard-tab').classList.contains('active')) {
+            loadBigBoard();
+            searchBigBoardPlayers();
+        }
+    } catch (error) {
+        console.error('Error removing imported board:', error);
+        showToast('Remove Failed', 'Error removing board. Please try again.', 'error', 7000);
+    }
 }
 
 function updateBoardWeightingSummary() {
@@ -1762,6 +1835,286 @@ function closePlayerReport() {
     }
 }
 
+async function loadWatchList() {
+    const listEl = document.getElementById('watchlist-list');
+    if (!listEl) {
+        return;
+    }
+
+    try {
+        const { data } = await requestGetJson('/api/watchlist');
+        renderWatchList(data);
+    } catch (error) {
+        console.error('Error loading watch list:', error);
+        listEl.innerHTML = '<p class="search-empty">Error loading watch list.</p>';
+    }
+}
+
+function renderWatchList(entries) {
+    const listEl = document.getElementById('watchlist-list');
+    if (!listEl) {
+        return;
+    }
+
+    listEl.innerHTML = '';
+    listEl.ondragover = handleWatchListListDragOver;
+    listEl.ondrop = handleWatchListDrop;
+
+    if (!Array.isArray(entries) || entries.length === 0) {
+        listEl.innerHTML = '<p class="search-empty">No players on your watch list yet. Open a player profile and click Add to Watch List.</p>';
+        return;
+    }
+
+    entries.forEach((entry, index) => {
+        const item = document.createElement('div');
+        item.className = 'bigboard-item';
+        item.draggable = true;
+        item.dataset.playerId = String(entry.id);
+        item.addEventListener('dragstart', handleWatchListDragStart);
+        item.addEventListener('dragover', handleWatchListDragOver);
+        item.addEventListener('dragend', handleWatchListDragEnd);
+        item.addEventListener('click', function(event) {
+            if (event.target.closest('button')) {
+                return;
+            }
+            openWatchListPlayerReport(entry.id);
+        });
+
+        const main = document.createElement('div');
+        main.className = 'bigboard-item-main';
+
+        const rank = document.createElement('div');
+        rank.className = 'bigboard-rank';
+        rank.textContent = `#${index + 1}`;
+
+        const name = document.createElement('div');
+        name.className = 'bigboard-name';
+        name.textContent = entry.name;
+
+        const meta = document.createElement('div');
+        meta.className = 'bigboard-meta';
+        const metaParts = [entry.position || 'N/A', entry.school || 'Unknown'];
+        if (entry.grade) {
+            metaParts.push(entry.grade);
+        }
+        meta.textContent = metaParts.join(' • ');
+
+        main.appendChild(rank);
+        main.appendChild(name);
+        main.appendChild(meta);
+
+        const actions = document.createElement('div');
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'mini-btn remove';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            removePlayerFromWatchList(entry.id);
+        });
+        actions.appendChild(removeBtn);
+
+        item.appendChild(main);
+        item.appendChild(actions);
+        listEl.appendChild(item);
+    });
+}
+
+async function openWatchListPlayerReport(playerId) {
+    try {
+        const { response, data } = await requestGetJson(`/api/player/${playerId}`);
+        const player = data || {};
+
+        if (!response.ok || player.error) {
+            showToast('Load Failed', player.error || 'Unable to load scout report.', 'error', 6000);
+            return;
+        }
+
+        currentPlayer = player;
+        currentPlayerSourceTab = 'watchlist-tab';
+        displayPlayerDetails(player);
+    } catch (error) {
+        console.error('Error loading watch list player report:', error);
+        showToast('Load Failed', 'Error loading scout report. Please try again.', 'error', 6000);
+    }
+}
+
+function ensureWatchListDropPlaceholder() {
+    if (!watchListDropPlaceholder) {
+        watchListDropPlaceholder = document.createElement('div');
+        watchListDropPlaceholder.className = 'bigboard-drop-placeholder';
+        const label = document.createElement('span');
+        label.className = 'bigboard-drop-label';
+        watchListDropPlaceholder.appendChild(label);
+    }
+    return watchListDropPlaceholder;
+}
+
+function updateWatchListPlaceholderLabel() {
+    if (!watchListDropPlaceholder || !watchListDropPlaceholder.parentElement) {
+        return;
+    }
+
+    const listEl = watchListDropPlaceholder.parentElement;
+    const siblings = Array.from(listEl.children);
+    const placeholderIndex = siblings.indexOf(watchListDropPlaceholder);
+    if (placeholderIndex < 0) {
+        return;
+    }
+
+    const rank = siblings
+        .slice(0, placeholderIndex)
+        .filter(el => el.classList.contains('bigboard-item') && !el.classList.contains('dragging'))
+        .length + 1;
+
+    const label = watchListDropPlaceholder.querySelector('.bigboard-drop-label');
+    if (label) {
+        label.textContent = `Drop at #${rank}`;
+    }
+}
+
+function placeWatchListPlaceholderAtIndex(index) {
+    const listEl = document.getElementById('watchlist-list');
+    const placeholder = ensureWatchListDropPlaceholder();
+    const items = Array.from(listEl.querySelectorAll('.bigboard-item:not(.dragging)'));
+    const clampedIndex = Math.max(0, Math.min(index, items.length));
+
+    if (clampedIndex >= items.length) {
+        listEl.appendChild(placeholder);
+    } else {
+        listEl.insertBefore(placeholder, items[clampedIndex]);
+    }
+
+    listEl.classList.add('drag-active');
+    watchListLastDropIndex = clampedIndex;
+    updateWatchListPlaceholderLabel();
+}
+
+function positionWatchListPlaceholderByPointer(clientY) {
+    const listEl = document.getElementById('watchlist-list');
+    const items = Array.from(listEl.querySelectorAll('.bigboard-item:not(.dragging)'));
+    if (!items.length) {
+        placeWatchListPlaceholderAtIndex(0);
+        return;
+    }
+
+    const slotPadding = 18;
+    const deadZone = 12;
+    let targetIndex = items.length;
+
+    for (let index = 0; index < items.length; index += 1) {
+        const rect = items[index].getBoundingClientRect();
+        const slotTop = rect.top - slotPadding;
+        const slotBottom = rect.bottom + slotPadding;
+        const midPoint = rect.top + rect.height / 2;
+
+        if (clientY < slotTop) {
+            targetIndex = index;
+            break;
+        }
+
+        if (clientY >= slotTop && clientY <= slotBottom) {
+            if (clientY < midPoint - deadZone) {
+                targetIndex = index;
+            } else if (clientY > midPoint + deadZone) {
+                targetIndex = index + 1;
+            } else {
+                targetIndex = watchListLastDropIndex !== null ? watchListLastDropIndex : index + 1;
+            }
+            break;
+        }
+    }
+
+    placeWatchListPlaceholderAtIndex(targetIndex);
+}
+
+function clearWatchListDragArtifacts() {
+    const listEl = document.getElementById('watchlist-list');
+    listEl?.classList.remove('drag-active');
+    if (watchListDropPlaceholder?.parentElement) {
+        watchListDropPlaceholder.parentElement.removeChild(watchListDropPlaceholder);
+    }
+    watchListLastDropIndex = null;
+    draggedWatchListPlayerId = null;
+}
+
+function handleWatchListDragStart(event) {
+    draggedWatchListPlayerId = event.currentTarget.dataset.playerId;
+    event.currentTarget.classList.add('dragging');
+    event.dataTransfer.effectAllowed = 'move';
+}
+
+function handleWatchListDragOver(event) {
+    event.preventDefault();
+    if (!draggedWatchListPlayerId) {
+        return;
+    }
+    positionWatchListPlaceholderByPointer(event.clientY);
+}
+
+function handleWatchListListDragOver(event) {
+    event.preventDefault();
+    if (!draggedWatchListPlayerId) {
+        return;
+    }
+    positionWatchListPlaceholderByPointer(event.clientY);
+}
+
+async function handleWatchListDrop(event) {
+    event.preventDefault();
+    if (!draggedWatchListPlayerId) {
+        clearWatchListDragArtifacts();
+        return;
+    }
+
+    const listEl = document.getElementById('watchlist-list');
+    const playerIds = Array.from(listEl.querySelectorAll('.bigboard-item'))
+        .filter(item => !item.classList.contains('dragging'))
+        .map(item => Number(item.dataset.playerId));
+
+    const placeholder = watchListDropPlaceholder;
+    if (placeholder && placeholder.parentElement === listEl) {
+        const placeholderIndex = Array.from(listEl.children).indexOf(placeholder);
+        const insertIndex = Math.max(0, placeholderIndex);
+        const draggedIdNum = Number(draggedWatchListPlayerId);
+        const currentIndex = playerIds.indexOf(draggedIdNum);
+        if (currentIndex >= 0) {
+            playerIds.splice(currentIndex, 1);
+        }
+        const safeInsertIndex = Math.max(0, Math.min(insertIndex, playerIds.length));
+        playerIds.splice(safeInsertIndex, 0, draggedIdNum);
+    }
+
+    try {
+        await requestPostJson('/api/watchlist/reorder', { player_ids: playerIds });
+        await loadWatchList();
+    } catch (error) {
+        console.error('Error reordering watch list:', error);
+        showToast('Save Failed', 'Could not reorder watch list.', 'error', 5000);
+    } finally {
+        clearWatchListDragArtifacts();
+    }
+}
+
+function handleWatchListDragEnd(event) {
+    event.currentTarget.classList.remove('dragging');
+    clearWatchListDragArtifacts();
+}
+
+async function removePlayerFromWatchList(playerId) {
+    try {
+        await requestPostJson('/api/watchlist/remove', { player_id: playerId });
+        if (currentPlayer && Number(currentPlayer.id) === Number(playerId)) {
+            currentPlayer.in_watch_list = false;
+            currentPlayer.watchlist_rank = null;
+            updateWatchListActionButton(currentPlayer);
+        }
+        await loadWatchList();
+    } catch (error) {
+        console.error('Error removing from watch list:', error);
+        showToast('Remove Failed', 'Could not remove player from watch list.', 'error', 5000);
+    }
+}
+
 async function searchBigBoardPlayers() {
     if (!bigBoardController) {
         return;
@@ -1877,6 +2230,53 @@ async function addPlayerFromSettings() {
         messageEl.classList.remove('hidden');
     } finally {
         addBtn.disabled = false;
+    }
+}
+
+function updateWatchListActionButton(player) {
+    const watchListBtn = document.getElementById('toggle-watchlist-btn');
+    if (!watchListBtn) {
+        return;
+    }
+
+    const isOnWatchList = !!player && !!player.in_watch_list;
+    watchListBtn.textContent = isOnWatchList ? '− Remove from Watch List' : '+ Add to Watch List';
+    watchListBtn.classList.toggle('remove', isOnWatchList);
+}
+
+async function toggleCurrentPlayerWatchList() {
+    if (!currentPlayer || !currentPlayer.id) {
+        return;
+    }
+
+    const playerId = Number(currentPlayer.id);
+
+    try {
+        if (currentPlayer.in_watch_list) {
+            const { response, data } = await requestPostJson('/api/watchlist/remove', { player_id: playerId });
+            if (!response.ok || data?.success === false) {
+                throw new Error(data?.error || 'Failed to remove player from watch list.');
+            }
+            currentPlayer.in_watch_list = false;
+            currentPlayer.watchlist_rank = null;
+            showToast('Watch List Updated', `${currentPlayer.name} removed from your watch list.`, 'success', 4000);
+        } else {
+            const { response, data } = await requestPostJson('/api/watchlist/add', { player_id: playerId });
+            if (!response.ok || data?.success === false) {
+                throw new Error(data?.error || 'Failed to add player to watch list.');
+            }
+            currentPlayer.in_watch_list = true;
+            showToast('Watch List Updated', `${currentPlayer.name} added to your watch list.`, 'success', 4000);
+        }
+
+        updateWatchListActionButton(currentPlayer);
+        const activeTab = document.querySelector('.tab-panel.active')?.id;
+        if (activeTab === 'watchlist-tab') {
+            await loadWatchList();
+        }
+    } catch (error) {
+        console.error('Error updating watch list:', error);
+        showToast('Watch List Failed', error.message || 'Unable to update watch list right now.', 'error', 6000);
     }
 }
 
@@ -2022,6 +2422,7 @@ async function loadPlayerReport(playerId) {
 // Randomize player with animation
 async function randomizePlayer() {
     const randomizeBtn = document.getElementById('randomize-btn');
+    const watchListOnly = document.getElementById('randomizer-watchlist-only')?.checked;
     randomizeBtn.disabled = true;
  
     try {
@@ -2030,6 +2431,9 @@ async function randomizePlayer() {
         selectedPositions.forEach(pos => params.append('positions[]', pos));
         if (selectedRank) {
             params.append('max_rank', selectedRank);
+        }
+        if (watchListOnly) {
+            params.append('watch_list_only', 'true');
         }
      
         // Fetch eligible players
@@ -2264,6 +2668,8 @@ function displayPlayerDetails(player) {
         scoutBtn.innerHTML = '<span>✓</span> Mark as Scouted';
         scoutBtn.classList.remove('scouted');
     }
+
+    updateWatchListActionButton(player);
  
     // Place details where they should appear for the source tab
     positionPlayerDetailsForCurrentSource();
@@ -2377,6 +2783,11 @@ async function toggleScoutStatus() {
         return;
     }
     await playerReportController.toggleScoutStatus();
+
+    if (currentPlayerSourceTab === 'watchlist-tab' && currentPlayer?.scouted) {
+        closePlayerReport();
+        await loadWatchList();
+    }
 }
 
 async function savePlayerProfile() {
